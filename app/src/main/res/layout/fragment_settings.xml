@@ -1,20 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:padding="16dp"
+    tools:context=".ui.settings.SettingsFragment">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Settings"
-        android:textAppearance="@style/TextAppearance.AppCompat.Large" />
+        android:text="User Nickname"
+        android:textAppearance="?attr/textAppearanceSubtitle1" />
 
-    <TextView
+    <EditText
+        android:id="@+id/nicknameEditText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="Enter your nickname"
+        android:inputType="textPersonName" />
+
+    <Button
+        android:id="@+id/saveNicknameButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
+        android:text="Save Nickname" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Other Settings"
+        android:textAppearance="?attr/textAppearanceSubtitle1" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android.layout_height="wrap_content"
+        android:layout_marginTop="8dp"
         android:text="Indoor Navigation (Coming Soon)" />
 
     <TextView
