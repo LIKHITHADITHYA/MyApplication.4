@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">My Application</string>
+
+    <string name="start_sharing">Start Sharing</string>
+    <string name="sharing_active">Sharing Active</string>
+    <string name="all_clear">All Clear</string>
+    <string name="alert_danger_format">%1$s\nRecommended Speed: %2$.1f m/s</string>
+
+</resources>
