@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="User Nickname"
+        android:text="@string/user_nickname"
         android:textAppearance="?attr/textAppearanceSubtitle1" />
 
     <EditText
@@ -18,33 +18,34 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:hint="Enter your nickname"
-        android:inputType="textPersonName" />
+        android:hint="@string/enter_your_nickname"
+        android:inputType="textPersonName"
+        android:autofillHints="nickname" />
 
     <Button
         android:id="@+id/saveNicknameButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Save Nickname" />
+        android:text="@string/save_nickname" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
-        android:text="Other Settings"
+        android:text="@string/other_settings"
         android:textAppearance="?attr/textAppearanceSubtitle1" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android.layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Indoor Navigation (Coming Soon)" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Alert Thresholds (Coming Soon)" />
+        android:text="@string/indoor_navigation_coming_soon" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/alert_thresholds_coming_soon" />
 
 </LinearLayout>

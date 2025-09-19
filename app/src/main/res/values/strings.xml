@@ -3,7 +3,15 @@
 
     <string name="start_sharing">Start Sharing</string>
     <string name="sharing_active">Sharing Active</string>
+    <string name="stop_sharing">Stop Sharing</string>
     <string name="all_clear">All Clear</string>
     <string name="alert_danger_format">%1$s\nRecommended Speed: %2$.1f m/s</string>
-
+    <string name="motion_status">Motion: %s</string>
+    <string name="v2i_message_status">V2I Message: %s</string>
+    <string name="user_nickname">User Nickname</string>
+    <string name="enter_your_nickname">Enter your nickname</string>
+    <string name="save_nickname">Save Nickname</string>
+    <string name="other_settings">Other Settings</string>
+    <string name="indoor_navigation_coming_soon">Indoor Navigation (Coming Soon)</string>
+    <string name="alert_thresholds_coming_soon">Alert Thresholds (Coming Soon)</string>
 </resources>

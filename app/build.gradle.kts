@@ -50,6 +50,16 @@ dependencies {
 
     // Location Services
     implementation("com.google.android.gms:play-services-location:21.2.0")
+    implementation("com.google.android.gms:play-services-maps:18.2.0")
+
+    // CameraX dependencies
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // Add this line for Gson
+    implementation(libs.google.gson)
 
     // Wi-Fi Direct (part of Android framework, no direct dependency usually needed)
     // For newer devices (API 31+), NEARBY_WIFI_DEVICES permission is needed in Manifest.

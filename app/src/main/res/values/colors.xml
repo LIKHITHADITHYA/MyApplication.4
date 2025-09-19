@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Existing cool colors (can be kept for reference or removed if not used by your theme) -->
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
@@ -12,4 +13,17 @@
     <color name="color_safe">#4CAF50</color> <!-- Green -->
     <color name="color_caution">#FF9800</color> <!-- Orange -->
     <color name="color_danger">#F44336</color> <!-- Red -->
+
+    <!-- New Warm Theme Colors -->
+    <color name="warm_primary">#FFA726</color> <!-- Orange 400 -->
+    <color name="warm_primary_dark">#F57C00</color> <!-- Orange 700 -->
+    <color name="warm_secondary">#FFCA28</color> <!-- Amber 400 -->
+    <color name="warm_secondary_variant">#FFA000</color> <!-- Amber 700 -->
+    <color name="warm_background">#FFFDE7</color> <!-- Light Cream/Yellow -->
+    <color name="warm_surface">#FFFFFF</color> <!-- White or very light cream -->
+
+    <color name="warm_on_primary">#FFFFFF</color>
+    <color name="warm_on_secondary">#000000</color>
+    <color name="warm_on_background">#000000</color>
+    <color name="warm_on_surface">#000000</color>
 </resources>
