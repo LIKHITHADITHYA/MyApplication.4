@@ -3,14 +3,18 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_graph"
-    app:startDestination="@id/dashboardFragment">
+    app:startDestination="@id/landingPageFragment">
 
     <fragment
-        android:id="@+id/dashboardFragment"
+        android:id="@+id/landingPageFragment"
         android:name="com.example.myapplication.ui.main.DashboardFragment"
-        android:label="DashboardFragment" />
+        android:label="fragment_landing_page"
+        tools:layout="@layout/fragment_dashboard" />
+
     <fragment
-        android:id="@+id/settingsFragment"
-        android:name="com.example.myapplication.ui.settings.SettingsFragment"
-        android:label="SettingsFragment" />
+        android:id="@+id/gpsPageFragment"
+        android:name="com.example.myapplication.ui.gps.GpsFragment"
+        android:label="fragment_gps_page"
+        tools:layout="@layout/fragment_gps" />
+
 </navigation>

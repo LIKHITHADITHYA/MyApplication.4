@@ -1,270 +1,183 @@
 package com.example.myapplication.services
 
 import android.Manifest
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.Location
-import android.location.LocationManager
-import android.net.wifi.p2p.WifiP2pConfig
-import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import com.example.myapplication.CollisionPredictionEngine
 import com.example.myapplication.DataFusionEngine
 import com.example.myapplication.GnssDataProvider
 import com.example.myapplication.MainActivity
+import com.example.myapplication.P2pCommunicationManager
 import com.example.myapplication.VehicleData
-import com.example.myapplication.core.CollisionPredictionEngine
 import com.example.myapplication.core.ExtendedKalmanFilter
-import com.example.myapplication.core.SensorFusionEngine
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
+import com.example.myapplication.core.ProximityAlertEngine
+import com.example.myapplication.models.DeviceData
+import com.example.myapplication.ui.gps.NearbyVehicle
+import com.example.myapplication.ui.main.DashboardViewModel
+import com.example.myapplication.utils.NotificationHelper
+import com.google.android.gms.location.*
+import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.ObjectOutputStream
-import java.net.InetSocketAddress
-import java.net.Socket
-import kotlin.concurrent.thread
+import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
 
-class NavigationService : Service(), SensorEventListener {
+class NavigationService : Service(), SensorEventListener, P2pCommunicationManager.OnDataReceivedListener {
+
+    private val binder = LocalBinder()
+    private var viewModel: DashboardViewModel? = null
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var locationManager: LocationManager
-    private lateinit var gnssDataProvider: GnssDataProvider
-    private lateinit var sensorManager: SensorManager
+    private lateinit var sensorManager: android.hardware.SensorManager
+    lateinit var p2pCommunicationManager: P2pCommunicationManager
+
+    private lateinit var notificationHelper: NotificationHelper
+    private lateinit var proximityAlertEngine: ProximityAlertEngine
+    private lateinit var collisionPredictionEngine: CollisionPredictionEngine
+    private lateinit var dataFusionEngine: DataFusionEngine
+    private var currentUserVehicleData: VehicleData? = null
 
     private val ekf = ExtendedKalmanFilter()
-    private val sensorFusionEngine = SensorFusionEngine()
-    private val collisionPredictionEngine = CollisionPredictionEngine()
-    private val proximityAlertEngine = ProximityAlertEngine()
-    private val dataFusionEngine = DataFusionEngine() // Assume initialized elsewhere or with default data
+    private val otherVehicles = ConcurrentHashMap<String, VehicleData>()
 
     private var lastAccelerometerReading = FloatArray(3)
     private var lastGyroscopeReading = FloatArray(3)
 
     private var wifiP2pManager: WifiP2pManager? = null
     private var wifiP2pChannel: WifiP2pManager.Channel? = null
-    private lateinit var wifiDirectReceiver: BroadcastReceiver
+    private var groupOwnerAddress: InetAddress? = null
+    private var isGroupOwner: Boolean = false
+    private var isGnssCurrentlyActive = false // Added for isGnssActivePublic
 
-    private var lastKnownLocation: Location? = null
-
-    // Constants
-    companion object {
-        private const val NOTIFICATION_ID = 1
-        private const val PROXIMITY_ALERT_INTENT = "com.example.myapplication.PROXIMITY_ALERT_INTENT"
-        private const val COLLISION_WARNING_CHANNEL_ID = "COLLISION_WARNING_CHANNEL"
-        private const val PROXIMITY_WARNING_CHANNEL_ID = "PROXIMITY_WARNING_CHANNEL"
-        private const val TTC_WARNING_THRESHOLD = 5.0 // Time To Collision in seconds
+    inner class LocalBinder : Binder() {
+        fun getService(): NavigationService = this@NavigationService
     }
 
-    // Location Callback
+    fun setViewModel(viewModel: DashboardViewModel) {
+        this.viewModel = viewModel
+    }
+
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(locationResult: LocationResult) {
             locationResult.lastLocation?.let { location ->
-                Log.d("NavigationService", "New location: ${location.latitude}, ${location.longitude}")
-                lastKnownLocation = location
+                Log.d(TAG, "New GPS location: ${location.latitude}, ${location.longitude}, Time: ${location.time}")
 
-                ekf.update(location)
-                val fusedLocation = ekf.getLocation()
-                Log.d("NavigationService", "Fused location: ${fusedLocation.latitude}, ${fusedLocation.longitude}")
+                ekf.update(location) // EKF handles initialization
+                val fusedLocation = ekf.getLocation() // Gets EKF fused location, speed, bearing
+                Log.d(TAG, "EKF Fused location: ${fusedLocation.latitude}, ${fusedLocation.longitude}, Speed: ${fusedLocation.speed}, Bearing: ${fusedLocation.bearing}, Time: ${fusedLocation.time}")
 
-                // Simulate data from other devices
-                val otherDeviceData1 = VehicleData(1, fusedLocation.latitude + 0.0001, fusedLocation.longitude + 0.0001, 10f, 45f)
-                val otherDeviceData2 = VehicleData(2, fusedLocation.latitude - 0.00005, fusedLocation.longitude + 0.00005, 15f, 135f)
-                val otherDevicesData = listOf(otherDeviceData1, otherDeviceData2)
+                val newLatLng = LatLng(fusedLocation.latitude, fusedLocation.longitude)
 
-                // Data Fusion
-                val fusedOtherDeviceData = dataFusionEngine.fuseData(otherDevicesData)
+                viewModel?.updateCurrentUserLocation(newLatLng)
+                viewModel?.updateCurrentSpeed(fusedLocation.speed)
+                viewModel?.updateCurrentHeading(fusedLocation.bearing)
+                viewModel?.updateGnssData("Lat: ${String.format("%.4f", newLatLng.latitude)}, Lon: ${String.format("%.4f", newLatLng.longitude)}")
+                viewModel?.updateConnectionStatus("Connected - EKF Fused")
 
-                // Collision Prediction
-                val myDeviceData = VehicleData(0, fusedLocation.latitude, fusedLocation.longitude, fusedLocation.speed, fusedLocation.bearing)
-                val ttc = collisionPredictionEngine.predictCollision(myDeviceData, fusedOtherDeviceData)
+                currentUserVehicleData = VehicleData(
+                    deviceId = "myDevice",
+                    timestamp = fusedLocation.time, // Use EKF time
+                    latitude = fusedLocation.latitude,
+                    longitude = fusedLocation.longitude,
+                    speed = fusedLocation.speed,
+                    bearing = fusedLocation.bearing,
+                    accelerometerData = lastAccelerometerReading,
+                    gyroscopeData = lastGyroscopeReading
+                )
 
-                if (ttc != null && ttc < TTC_WARNING_THRESHOLD) {
-                    // Trigger collision warning notification
-                    showCollisionWarningNotification("Collision Warning! TTC: %.1f seconds".format(ttc))
+                if (!isGroupOwner && groupOwnerAddress != null) {
+                    currentUserVehicleData?.let { p2pCommunicationManager.sendData(it, groupOwnerAddress!!) }
                 }
-
-                // Proximity Alerting
-                val proximityStatus = proximityAlertEngine.checkProximity(myDeviceData, fusedOtherDeviceData)
-                when (proximityStatus) {
-                    ProximityAlertEngine.ProximityStatus.DANGER_ZONE -> showProximityWarningNotification("Danger Zone! Another vehicle is very close.")
-                    ProximityAlertEngine.ProximityStatus.CAUTION_ZONE -> showProximityWarningNotification("Caution Zone! Another vehicle is nearby.")
-                    ProximityAlertEngine.ProximityStatus.ALL_CLEAR -> Unit // No notification needed
-                }
-
-                // Add proximity alert only once for the initial location
-                if (ActivityCompat.checkSelfPermission(
-                        this@NavigationService,
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    // This creates a PendingIntent that will be broadcast when the device enters/exits the proximity area
-                    // For a real app, you'd calculate a meaningful proximity location and radius
-                    if (lastKnownLocation != null) {
-                         // Add proximity alert only if not already added and we have a location
-                        val intent = Intent(PROXIMITY_ALERT_INTENT)
-                        val pendingIntent = getProximityAlertPendingIntent()
-                        locationManager.addProximityAlert(
-                            lastKnownLocation!!.latitude,
-                            lastKnownLocation!!.longitude,
-                            100f, // Radius in meters
-                            -1, // Never expire
-                            pendingIntent
-                        )
-                        Log.d("NavigationService", "Proximity alert added for ${lastKnownLocation!!.latitude}, ${lastKnownLocation!!.longitude}")
-                    }
-                }
-
-                logData(location)
+                checkProximityAndNotify()
             }
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate() {
         super.onCreate()
-        Log.d("NavigationService", "Service creating...")
+        Log.d(TAG, "Service creating...")
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
 
-        // Initialize notification channels
+        notificationHelper = NotificationHelper(this)
+        proximityAlertEngine = ProximityAlertEngine(this)
+        collisionPredictionEngine = CollisionPredictionEngine()
+        dataFusionEngine = DataFusionEngine()
+
         createNotificationChannel()
-        createCollisionWarningNotificationChannel()
-        createProximityWarningNotificationChannel()
-
-        // Start service in foreground
         val notification = createNotification().build()
         startForeground(NOTIFICATION_ID, notification)
-        Log.d("NavigationService", "Service started in foreground (type: location).")
+        Log.d(TAG, "Service started in foreground.")
 
         serviceScope.launch {
-            // Initialize GNSS Data Provider on a background thread
-            gnssDataProvider = GnssDataProvider(this@NavigationService)
-            gnssDataProvider.start()
-            Log.d("NavigationService", "GnssDataProvider initialized and started on background thread.")
+            wifiP2pManager = getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+            wifiP2pChannel = wifiP2pManager?.initialize(this@NavigationService, Looper.getMainLooper(), null)
 
-            // Initialize Wi-Fi Direct on a background thread
-            initWifiDirect()
-            Log.d("NavigationService", "Background initialization tasks finished.")
+            if (wifiP2pManager == null || wifiP2pChannel == null) {
+                Log.w(TAG, "Wi-Fi Direct feature NOT available on this device.")
+                return@launch
+            }
+
+            p2pCommunicationManager = P2pCommunicationManager(this@NavigationService, wifiP2pManager!!, wifiP2pChannel!!, this@NavigationService)
+            p2pCommunicationManager.registerReceiver()
+            p2pCommunicationManager.discoverPeers()
+            Log.d(TAG, "P2pCommunicationManager initialized.")
         }
 
         startLocationUpdates()
         registerSensorListeners()
     }
 
-    private fun initWifiDirect() {
-        wifiP2pManager = getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
-        wifiP2pChannel = wifiP2pManager?.initialize(this, Looper.getMainLooper(), null)
-
-        if (wifiP2pManager == null || wifiP2pChannel == null) {
-            Log.w("NavigationService", "Wi-Fi Direct feature NOT available on this device.")
-            return
-        }
-        Log.d("NavigationService", "Wi-Fi P2P Manager and Channel initialized and assigned successfully.")
-
-        wifiDirectReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
-                        val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
-                        if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                            Log.d("NavigationService", "Wi-Fi Direct feature IS reported as available.")
-                            // Wifi P2P is enabled
-                        } else {
-                            Log.d("NavigationService", "Wi-Fi Direct feature IS NOT reported as available.")
-                            // Wi-Fi P2P is not enabled
-                        }
-                    }
-                    WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                        // Request available peers from the WifiP2pManager. This is an asynchronous call.
-                        // We do not have permission to access location data for Wi-Fi Direct,
-                        // which is required for requesting peers on API 29+.
-                        if (ActivityCompat.checkSelfPermission(
-                                this@NavigationService,
-                                Manifest.permission.ACCESS_FINE_LOCATION
-                            ) != PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(
-                                this@NavigationService,
-                                Manifest.permission.NEARBY_WIFI_DEVICES
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            Log.w("NavigationService", "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct peer request.")
-                            return
-                        }
-                        wifiP2pManager?.requestPeers(wifiP2pChannel) { peers ->
-                            Log.d("NavigationService", "Peer list: ${peers.deviceList.size} peers found.")
-                            // Process peer list
-                        }
-                    }
-                    WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
-                        // Respond to new connection or disconnections
-                    }
-                    WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
-                        // Respond to this device's wifi state changing
-                    }
-                }
-            }
-        }
-        registerReceiver(wifiDirectReceiver, IntentFilter().apply {
-            addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-            addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-            addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-            addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-        })
-        Log.d("NavigationService", "Wi-Fi Direct receiver registered.")
-
-        // Initiate peer discovery (optional, can be triggered by user)
-        discoverPeers()
-    }
-
-
-    private fun startLocationUpdates() {
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY, 1000
-        ) // Update every 1 second
-            .setMinUpdateIntervalMillis(500) // Smallest displacement between updates
+    fun startLocationUpdates() { // Changed to public
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000) // 1 second interval
+            .setMinUpdateIntervalMillis(500) // Minimum interval 0.5 seconds
             .build()
 
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.e("NavigationService", "Location permissions not granted. Cannot start location updates.")
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "Location permissions not granted.")
+            isGnssCurrentlyActive = false
             return
         }
         fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-        Log.d("NavigationService", "Starting location updates")
+        Log.d(TAG, "Starting location updates")
+        isGnssCurrentlyActive = true // Added
+    }
+
+    fun stopLocationUpdates() { // Added method
+        isGnssCurrentlyActive = false // Added
+        fusedLocationClient.removeLocationUpdates(locationCallback)
+        Log.d(TAG, "Stopping location updates")
+    }
+
+    fun isGnssActivePublic(): Boolean { // Added method
+        return isGnssCurrentlyActive
     }
 
     private fun registerSensorListeners() {
@@ -272,98 +185,39 @@ class NavigationService : Service(), SensorEventListener {
         val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
         accelerometer?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-        } ?: Log.w("NavigationService", "Accelerometer not available.")
-
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) // Consider SENSOR_DELAY_FASTEST for EKF
+        }
         gyroscope?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-        } ?: Log.w("NavigationService", "Gyroscope not available.")
-    }
-
-    private fun discoverPeers() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.NEARBY_WIFI_DEVICES
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.w("NavigationService", "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct discovery.")
-            // TODO: Consider informing the user or taking them to settings
-            return
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) // Consider SENSOR_DELAY_FASTEST for EKF
         }
-
-        wifiP2pManager?.discoverPeers(wifiP2pChannel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                Log.d("NavigationService", "Peer discovery initiated successfully.")
-            }
-
-            override fun onFailure(reason: Int) {
-                Log.w("NavigationService", "Peer discovery initiation failed: $reason")
-            }
-        })
-    }
-
-    private fun showCollisionWarningNotification(message: String) {
-        val notification = NotificationCompat.Builder(this, COLLISION_WARNING_CHANNEL_ID)
-            .setContentTitle("Collision Alert!")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(Notification.CATEGORY_ALARM)
-            .build()
-
-        getSystemService(NotificationManager::class.java).notify(2, notification)
-    }
-
-    private fun showProximityWarningNotification(message: String) {
-        val notification = NotificationCompat.Builder(this, PROXIMITY_WARNING_CHANNEL_ID)
-            .setContentTitle("Proximity Alert")
-            .setContentText(message)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(Notification.CATEGORY_STATUS)
-            .build()
-
-        getSystemService(NotificationManager::class.java).notify(3, notification)
-    }
-
-    // Helper function for creating proximity alert PendingIntent with appropriate flags
-    private fun getProximityAlertPendingIntent(): PendingIntent {
-        val intent = Intent(PROXIMITY_ALERT_INTENT)
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            // FLAG_MUTABLE is needed for addProximityAlert to allow the system to fill in extra data
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-        return PendingIntent.getBroadcast(this, 0, intent, flags)
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         event?.let {
+            var sensorUpdated = false
             when (it.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> lastAccelerometerReading = it.values
-                Sensor.TYPE_GYROSCOPE -> lastGyroscopeReading = it.values
+                Sensor.TYPE_ACCELEROMETER -> {
+                    lastAccelerometerReading = it.values.clone()
+                    sensorUpdated = true
+                }
+                Sensor.TYPE_GYROSCOPE -> {
+                    lastGyroscopeReading = it.values.clone()
+                    sensorUpdated = true
+                }
             }
-            ekf.predict(lastAccelerometerReading, lastGyroscopeReading, it.timestamp)
-            val predictedLocation = ekf.getLocation()
-            Log.d("NavigationService", "EKF prediction: ${predictedLocation.latitude}, ${predictedLocation.longitude}")
+            
+            if (sensorUpdated && ekf.isInitialized()) {
+                // Log.d(TAG, "IMU Update: Accel=${lastAccelerometerReading.joinToString(",")}, Gyro=${lastGyroscopeReading.joinToString(",")}, Timestamp=${it.timestamp}")
+                ekf.predict(lastAccelerometerReading, lastGyroscopeReading, it.timestamp)
+                // Optionally, could update viewmodel with EKF state more frequently here if needed,
+                // but it might be too much. Current design updates ViewModel on GPS fix (onLocationResult).
+            }
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun logData(location: Location) {
-        val logFile = File(getExternalFilesDir(null), "navigation_log.txt")
-        // Ensure parent directory exists
-        logFile.parentFile?.mkdirs()
-        logFile.appendText("Loc: ${location.latitude}, ${location.longitude}, Spd: ${location.speed}
-")
-    }
+    override fun onBind(intent: Intent?): IBinder = binder
 
     private fun createNotification(): NotificationCompat.Builder {
         val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -371,71 +225,161 @@ class NavigationService : Service(), SensorEventListener {
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), pendingIntentFlags
-        )
+        val pendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), pendingIntentFlags)
         return NotificationCompat.Builder(this, "NAVIGATION_SERVICE_CHANNEL")
             .setContentTitle("Navigation Service")
-            .setContentText("Running...")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentText("Sharing location data...")
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentIntent(pendingIntent)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel("NAVIGATION_SERVICE_CHANNEL", "Navigation Service", NotificationManager.IMPORTANCE_DEFAULT)
+            val channel = NotificationChannel("NAVIGATION_SERVICE_CHANNEL", "Navigation Service", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
-    private fun createCollisionWarningNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Collision Warnings"
-            val descriptionText = "Notifications for potential collisions"
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(COLLISION_WARNING_CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-            }
-            val notificationManager: NotificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun createProximityWarningNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Proximity Warnings"
-            val descriptionText = "Notifications for proximity alerts"
-            val importance = NotificationManager.IMPORTANCE_DEFAULT
-            val channel = NotificationChannel(PROXIMITY_WARNING_CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-            }
-            val notificationManager: NotificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
-
-
     override fun onDestroy() {
         super.onDestroy()
-        Log.d("NavigationService", "Service destroying...")
-        serviceScope.cancel() // Cancel all coroutines in the scope
-        gnssDataProvider.stop()
+        Log.d(TAG, "Service destroying...")
+        serviceScope.cancel()
+        isGnssCurrentlyActive = false // Added
         fusedLocationClient.removeLocationUpdates(locationCallback)
-        if (wifiP2pManager != null && wifiP2pChannel != null) {
-            try {
-                unregisterReceiver(wifiDirectReceiver)
-                Log.d("NavigationService", "Wi-Fi Direct receiver unregistered.")
-            } catch (e: IllegalArgumentException) {
-                Log.w("NavigationService", "Receiver not registered or already unreg: ${e.message}")
-            }
-        } else {
-            Log.d("NavigationService", "Wi-Fi Direct not initialized; skipping unregistration.")
+        p2pCommunicationManager.close()
+        sensorManager.unregisterListener(this) // Unregister sensor listeners
+        Log.d(TAG, "Service destroyed.")
+    }
+
+    override fun onVehicleDataReceived(data: VehicleData) {
+        Log.d(TAG, "Received VehicleData via P2P: ${data.deviceId}, Bearing: ${data.bearing}")
+        otherVehicles[data.deviceId] = data
+        updateNearbyVehiclesInViewModel()
+        checkProximityAndNotify()
+    }
+
+    private fun updateNearbyVehiclesInViewModel() {
+        val nearbyVehiclesList = otherVehicles.values.map { vehicleData ->
+            NearbyVehicle(
+                id = vehicleData.deviceId,
+                location = LatLng(vehicleData.latitude, vehicleData.longitude),
+                name = "Vehicle ${vehicleData.deviceId}",
+                heading = vehicleData.bearing
+            )
+        }
+        viewModel?.updateNearbyVehicles(nearbyVehiclesList)
+    }
+
+    override fun onConnectionInfoAvailable(wifiP2pInfo: WifiP2pInfo) {
+        Log.d(TAG, "Connection Info Available: Group Owner: ${wifiP2pInfo.isGroupOwner}")
+        this.isGroupOwner = wifiP2pInfo.isGroupOwner
+        this.groupOwnerAddress = wifiP2pInfo.groupOwnerAddress
+        if (wifiP2pInfo.groupFormed && wifiP2pInfo.isGroupOwner) {
+            p2pCommunicationManager.startReceivingData()
+        }
+    }
+
+    private fun checkProximityAndNotify() {
+        val myDataSnapshot = currentUserVehicleData ?: return
+
+        val myDeviceData = DeviceData(
+            deviceId = myDataSnapshot.deviceId,
+            latitude = myDataSnapshot.latitude,
+            longitude = myDataSnapshot.longitude,
+            velocity = myDataSnapshot.speed,
+            bearing = myDataSnapshot.bearing,
+            timestamp = myDataSnapshot.timestamp
+        )
+
+        if (otherVehicles.isEmpty()) {
+            viewModel?.updateProximityStatus(ProximityAlertEngine.ProximityStatus.ALL_CLEAR)
+            viewModel?.updateFusedGroupData(myDeviceData) // Fused data is just self if no others and self exists
+            notificationHelper.cancelNotification(PROXIMITY_NOTIFICATION_ID)
+            notificationHelper.cancelNotification(COLLISION_NOTIFICATION_ID)
+            return
         }
 
-        val pendingIntent = getProximityAlertPendingIntent()
-        locationManager.removeProximityAlert(pendingIntent)
-        Log.d("NavigationService", "Proximity alert removed.")
+        val otherDeviceDataList = otherVehicles.values.mapNotNull { vehicleData ->
+            if (vehicleData.deviceId == myDeviceData.deviceId) null
+            else DeviceData(
+                deviceId = vehicleData.deviceId,
+                latitude = vehicleData.latitude,
+                longitude = vehicleData.longitude,
+                velocity = vehicleData.speed,
+                bearing = vehicleData.bearing,
+                timestamp = vehicleData.timestamp
+            )
+        }
 
-        Log.d("NavigationService", "Service destroyed.")
+        if (otherDeviceDataList.isEmpty()) {
+            viewModel?.updateProximityStatus(ProximityAlertEngine.ProximityStatus.ALL_CLEAR)
+            viewModel?.updateFusedGroupData(myDeviceData) // Fused data is just self
+            notificationHelper.cancelNotification(PROXIMITY_NOTIFICATION_ID)
+            notificationHelper.cancelNotification(COLLISION_NOTIFICATION_ID)
+            return
+        }
+
+        val allDeviceDataForFusion = mutableListOf<DeviceData>()
+        allDeviceDataForFusion.add(myDeviceData)
+        allDeviceDataForFusion.addAll(otherDeviceDataList)
+
+        val fusedDeviceData = dataFusionEngine.fuseData(allDeviceDataForFusion) 
+        if (fusedDeviceData != null) {
+            Log.i(TAG, "DataFusionEngine output: $fusedDeviceData")
+            viewModel?.updateFusedGroupData(fusedDeviceData)
+        } else {
+            Log.w(TAG, "DataFusionEngine returned null for a list of size ${allDeviceDataForFusion.size}")
+            viewModel?.updateFusedGroupData(null) 
+        }
+
+        var collisionPredictedThisCycle = false
+        for (otherDevice in otherDeviceDataList) {
+            if (collisionPredictionEngine.predictCollision(myDeviceData, otherDevice)) {
+                Log.w(TAG, "Collision predicted with ${otherDevice.deviceId}")
+                notificationHelper.sendNotification(
+                    COLLISION_NOTIFICATION_ID,
+                    "IMMINENT COLLISION WARNING!",
+                    "High risk of collision with ${otherDevice.deviceId}. Take evasive action!"
+                )
+                collisionPredictedThisCycle = true
+                break 
+            }
+        }
+
+        if (collisionPredictedThisCycle) {
+            notificationHelper.cancelNotification(PROXIMITY_NOTIFICATION_ID)
+            return 
+        }
+
+        val proximityStatus = proximityAlertEngine.checkProximity(myDataSnapshot, otherDeviceDataList)
+        viewModel?.updateProximityStatus(proximityStatus)
+
+        when (proximityStatus) {
+            ProximityAlertEngine.ProximityStatus.DANGER_ZONE -> {
+                notificationHelper.sendNotification(
+                    PROXIMITY_NOTIFICATION_ID,
+                    "DANGER ZONE!",
+                    "Vehicle nearby in DANGER zone. Immediate caution advised."
+                )
+            }
+            ProximityAlertEngine.ProximityStatus.CAUTION_ZONE -> {
+                notificationHelper.sendNotification(
+                    PROXIMITY_NOTIFICATION_ID,
+                    "CAUTION ZONE",
+                    "Vehicle approaching in CAUTION zone. Be aware."
+                )
+            }
+            ProximityAlertEngine.ProximityStatus.ALL_CLEAR -> {
+                notificationHelper.cancelNotification(PROXIMITY_NOTIFICATION_ID)
+            }
+        }
+        notificationHelper.cancelNotification(COLLISION_NOTIFICATION_ID) 
+    }
+
+    companion object {
+        private const val TAG = "NavigationService"
+        private const val NOTIFICATION_ID = 1
+        private const val PROXIMITY_NOTIFICATION_ID = 2
+        private const val COLLISION_NOTIFICATION_ID = 3
     }
 }

@@ -45,12 +45,12 @@ dependencies {
     implementation(libs.material)
     
     // Navigation Component
-    implementation("androidx.navigation:navigation-fragment-ktx:2.7.7")
-    implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
+    implementation("androidx.navigation:navigation-fragment-ktx:2.9.4")
+    implementation("androidx.navigation:navigation-ui-ktx:2.9.4")
 
     // Location Services
-    implementation("com.google.android.gms:play-services-location:21.2.0")
-    implementation("com.google.android.gms:play-services-maps:18.2.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-maps:19.2.0")
 
     // CameraX dependencies
     implementation(libs.androidx.camera.core)

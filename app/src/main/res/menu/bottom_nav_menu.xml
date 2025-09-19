@@ -1,15 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:id="@+id/nav_radar"
-        android:icon="@android:drawable/ic_menu_rotate"
-        android:title="Radar" />
+        android:id="@+id/landingPageFragment"
+        android:icon="@android:drawable/ic_menu_compass" 
+        android:title="Landing" />
     <item
-        android:id="@+id/nav_map"
-        android:icon="@android:drawable/ic_menu_mapmode"
-        android:title="Map" />
-    <item
-        android:id="@+id/nav_ar"
-        android:icon="@android:drawable/ic_menu_camera"
-        android:title="AR" />
+        android:id="@+id/gpsPageFragment"
+        android:icon="@android:drawable/ic_menu_mylocation" 
+        android:title="GPS" />
 </menu>

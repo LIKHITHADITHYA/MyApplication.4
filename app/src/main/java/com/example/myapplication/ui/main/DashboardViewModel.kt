@@ -3,10 +3,11 @@ package com.example.myapplication.ui.main
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
-import com.example.myapplication.core.Alert // Assuming Alert is in this package
-import com.google.android.gms.maps.model.LatLng // Added for currentUserLocation
-// If NearbyVehicle is in a different package, you might need to import it too.
-// For example: import com.example.myapplication.model.NearbyVehicle
+import com.example.myapplication.core.Alert
+import com.example.myapplication.core.ProximityAlertEngine
+import com.example.myapplication.models.DeviceData // Added import
+import com.google.android.gms.maps.model.LatLng
+import com.example.myapplication.ui.gps.NearbyVehicle
 
 class DashboardViewModel : ViewModel() {
 
@@ -19,34 +20,33 @@ class DashboardViewModel : ViewModel() {
     private val _alertStatus = MutableLiveData<Alert>()
     val alertStatus: LiveData<Alert> = _alertStatus
 
-    // This holds the current speed of the user's device in m/s
     private val _currentSpeed = MutableLiveData<Float>()
     val currentSpeed: LiveData<Float> = _currentSpeed
 
-    // This holds the list of other vehicles detected nearby
     private val _nearbyVehicles = MutableLiveData<List<NearbyVehicle>>()
     val nearbyVehicles: LiveData<List<NearbyVehicle>> = _nearbyVehicles
 
-    // This holds the latest detected motion event (e.g., "Braking", "Sharp Turn")
     private val _motionEvent = MutableLiveData<String>()
     val motionEvent: LiveData<String> = _motionEvent
 
-    // This holds the current altitude in meters
     private val _currentAltitude = MutableLiveData<Float>()
     val currentAltitude: LiveData<Float> = _currentAltitude
 
-    // This holds the current heading in degrees (0-360, 0 = North)
     private val _currentHeading = MutableLiveData<Float>()
     val currentHeading: LiveData<Float> = _currentHeading
 
-    // This holds the latest message from V2I communication
     private val _infrastructureMessage = MutableLiveData<String?>()
     val infrastructureMessage: LiveData<String?> = _infrastructureMessage
 
-    // IMPORTANT: This LiveData needs to be updated by your location service/provider
-    // with the user's current geographical coordinates for proximity alerts to work.
     private val _currentUserLocation = MutableLiveData<LatLng?>()
     val currentUserLocation: LiveData<LatLng?> = _currentUserLocation
+
+    private val _proximityStatus = MutableLiveData<ProximityAlertEngine.ProximityStatus>()
+    val proximityStatus: LiveData<ProximityAlertEngine.ProximityStatus> = _proximityStatus
+
+    // Added for Fused Group Data
+    private val _fusedGroupData = MutableLiveData<DeviceData?>()
+    val fusedGroupData: LiveData<DeviceData?> = _fusedGroupData
 
 
     fun updateGnssData(data: String) {
@@ -81,13 +81,20 @@ class DashboardViewModel : ViewModel() {
         _currentHeading.postValue(heading)
     }
 
-    // Function to update the V2I message
     fun updateInfrastructureMessage(message: String?) {
         _infrastructureMessage.postValue(message)
     }
 
-    // Function to update the user's current location
     fun updateCurrentUserLocation(location: LatLng?) {
         _currentUserLocation.postValue(location)
+    }
+
+    fun updateProximityStatus(status: ProximityAlertEngine.ProximityStatus) {
+        _proximityStatus.postValue(status)
+    }
+
+    // Added for Fused Group Data
+    fun updateFusedGroupData(data: DeviceData?) {
+        _fusedGroupData.postValue(data)
     }
 }

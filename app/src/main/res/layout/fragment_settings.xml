@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/user_nickname"
+        android:text="User Nickname"
         android:textAppearance="?attr/textAppearanceSubtitle1" />
 
     <EditText
@@ -18,7 +18,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:hint="@string/enter_your_nickname"
+        android:hint="Enter your nickname"
         android:inputType="textPersonName"
         android:autofillHints="nickname" />
 
@@ -27,25 +27,82 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="@string/save_nickname" />
+        android:text="Save Nickname" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
-        android:text="@string/other_settings"
+        android:text="GNSS Controls"
+        android:textAppearance="?attr/textAppearanceSubtitle1" />
+
+    <TextView
+        android:id="@+id/gnssStatusTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="GNSS Status: Unknown" />
+
+    <Button
+        android:id="@+id/toggleGnssButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Start GNSS" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="P2P Controls"
+        android:textAppearance="?attr/textAppearanceSubtitle1" />
+
+    <TextView
+        android:id="@+id/p2pStatusTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="P2P Status: Unknown" />
+
+    <Button
+        android:id="@+id/discoverPeersButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Discover Peers" />
+    
+    <Button
+        android:id="@+id/createGroupButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Create Group" />
+
+    <Button
+        android:id="@+id/removeGroupButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Remove Group" />
+
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Other Settings"
         android:textAppearance="?attr/textAppearanceSubtitle1" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="@string/indoor_navigation_coming_soon" />
+        android:text="Indoor navigation (Coming Soon)" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="@string/alert_thresholds_coming_soon" />
+        android:text="Alert Thresholds (Coming Soon)" />
 
 </LinearLayout>
