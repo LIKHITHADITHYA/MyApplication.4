@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option java_package = "com.example.myapplication.data";
+option java_multiple_files = true;
+
+message VehicleInfo { // Changed to VehicleInfo
+  double latitude = 1;
+  double longitude = 2;
+  double speed = 3;
+  double bearing = 4;
+  int64 timestamp = 5;
+}

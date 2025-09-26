@@ -11,6 +11,7 @@ import android.location.GnssMeasurementsEvent
 import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.core.content.ContextCompat
 
 class GnssDataProvider(
@@ -24,6 +25,7 @@ class GnssDataProvider(
 
     private val gnssCallback = object : GnssMeasurementsEvent.Callback() {
         override fun onGnssMeasurementsReceived(event: GnssMeasurementsEvent) {
+            Log.d("GnssDataProvider", "onGnssMeasurementsReceived: ${event.measurements}")
             onRawData(event)
         }
     }

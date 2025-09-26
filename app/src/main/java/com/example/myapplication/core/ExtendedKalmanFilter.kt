@@ -1,130 +1,131 @@
 package com.example.myapplication.core
 
-import android.location.Location
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
+import android.util.Log
+import com.example.myapplication.data.VehicleState
+import org.ejml.simple.SimpleMatrix
 
 class ExtendedKalmanFilter {
-    // State vector: [latitude, longitude, velocityNorth, velocityEast]
-    private var x: Matrix = Matrix(4, 1) // Initialized to zeros
-    // Covariance matrix
-    private var P: Matrix = Matrix.identity(4) // Initial uncertainty
-    // Process noise covariance (tune these based on system dynamics)
-    private var Q: Matrix = Matrix(4, 4).apply {
-        this[0, 0] = 0.0001 // Latitude noise
-        this[1, 1] = 0.0001 // Longitude noise
-        this[2, 2] = 0.01   // Velocity North noise
-        this[3, 3] = 0.01   // Velocity East noise
-    }
-    // Measurement noise covariance (tune based on GPS accuracy)
-    private var R: Matrix = Matrix(2, 2).apply {
-        this[0,0] = 10.0 // Latitude measurement noise
-        this[1,1] = 10.0 // Longitude measurement noise
+    private var x: SimpleMatrix // State vector [lat, lon, speed, bearing]
+    private var P: SimpleMatrix // Covariance matrix
+    private var Q: SimpleMatrix // Process noise covariance
+    private var R: SimpleMatrix // Measurement noise covariance
+    private var H: SimpleMatrix // Measurement matrix
+    private var lastTimestamp: Long = 0
+    private var initialized = false
+
+    private companion object {
+        private const val TAG = "ExtendedKalmanFilter"
     }
 
-    private var lastTimestamp: Long = 0L
-    private var isInitialized = false
-
-    companion object {
-        private const val NS2S = 1.0 / 1_000_000_000.0 // Nanoseconds to seconds
+    init {
+        // Initial state: [lat, lon, speed, bearing]
+        x = SimpleMatrix(4, 1)
+        P = SimpleMatrix.diag(1.0, 1.0, 1.0, 1.0)       // Initial uncertainty
+        Q = SimpleMatrix.diag(0.1, 0.1, 0.5, 0.1)      // Process noise: tuned for typical vehicle dynamics
+        R = SimpleMatrix.diag(10.0, 10.0, 1.0, 10.0)     // Measurement noise: GPS typical errors (lat/lon in meters, speed m/s, bearing degrees)
+        
+        // Measurement matrix: maps state to measurement [lat, lon, speed, bearing]
+        H = SimpleMatrix.identity(4)
     }
 
-    fun predict(acceleration: FloatArray, gyroscope: FloatArray, timestamp: Long) {
-        if (!isInitialized) {
-            // Log.d("EKF", "Predict called before initialization")
+    fun isInitialized(): Boolean = initialized
+
+    fun predict(accelerometerData: FloatArray, gyroscopeData: FloatArray, timestamp: Long) {
+        if (!initialized) {
+            Log.d(TAG, "Predict call skipped: EKF not initialized with a GPS location yet.")
             return
         }
 
-        val dt = (timestamp - lastTimestamp) * NS2S
-        if (dt <= 0) { // Ensure time has progressed
-            // Log.d("EKF", "dt is zero or negative in predict: $dt")
-            return
+        val dt = (timestamp - this.lastTimestamp) / 1000.0 // Delta time in seconds
+        if (dt <= 0) {
+            Log.w(TAG, "Predict call skipped: dt is zero or negative ($dt s). Current timestamp: $timestamp, last: ${this.lastTimestamp}")
+            return // Avoid division by zero or negative time
         }
-        lastTimestamp = timestamp
 
-        val accelN = if (acceleration.size > 0) acceleration[0].toDouble() else 0.0
-        val accelE = if (acceleration.size > 1) acceleration[1].toDouble() else 0.0
+        val ax = accelerometerData[0] // Assuming ax is longitudinal acceleration (m/s^2)
+        // val ay = accelerometerData[1] // Lateral acceleration (not used in this simplified model)
+        // val omega = gyroscopeData[2]    // Yaw rate (rad/s), for bearing prediction
 
-        val oldLat = x[0, 0]
-        val oldLon = x[1, 0]
-        val oldVelN = x[2, 0]
-        val oldVelE = x[3, 0]
+        // State transition matrix A
+        val A = SimpleMatrix.identity(4)
+        A.set(0, 2, dt) // lat = lat + speed * dt (simplified, should be speed * cos(bearing) * dt / R_earth for actual distance)
+        A.set(1, 2, dt) // lon = lon + speed * dt (simplified, should be speed * sin(bearing) * dt / (R_earth * cos(lat)) for actual distance)
+        // Speed is predicted as constant (x.set(2,0, x.get(2,0) + ax*dt) removed due to noise)
+        // Bearing is predicted as constant (can be enhanced with gyroscope: x.set(3,0, x.get(3,0) + omega*dt) );
 
-        x[0, 0] = oldLat + oldVelN * dt + 0.5 * accelN * dt * dt
-        x[1, 0] = oldLon + oldVelE * dt + 0.5 * accelE * dt * dt
-        x[2, 0] = oldVelN + accelN * dt
-        x[3, 0] = oldVelE + accelE * dt
+        // Predict state: x_pred = A * x
+        x = A.mult(x)
+        
+        // Predict covariance: P_pred = A * P * A^T + Q
+        P = A.mult(P).mult(A.transpose()).plus(Q)
 
-        val F = Matrix.identity(4)
-        F[0, 2] = dt
-        F[1, 3] = dt
-
-        P = F * P * F.transpose() + Q
-        // Log.d("EKF", "Predicted state: ${x.transpose()}, P: $P")
+        // No need to update lastTimestamp here as predict is driven by sensor timestamps,
+        // and 'dt' for GPS update should be relative to the *last GPS timestamp*.
+        // this.lastTimestamp = timestamp // This would make dt for GPS update very small if sensors are faster.
+        Log.d(TAG, "Predict: dt=$dt, ax=$ax. New predicted state x: [${x.get(0,0)}, ${x.get(1,0)}, ${x.get(2,0)}, ${x.get(3,0)}]")
     }
 
-    fun update(location: Location) {
-        if (!isInitialized) {
-            x[0, 0] = location.latitude
-            x[1, 0] = location.longitude
-            if (location.hasSpeed() && location.hasBearing()) {
-                val speed = location.speed.toDouble()
-                val bearingRad = Math.toRadians(location.bearing.toDouble())
-                x[2, 0] = speed * cos(bearingRad) // Velocity North
-                x[3, 0] = speed * sin(bearingRad) // Velocity East
-            } else {
-                x[2, 0] = 0.0
-                x[3, 0] = 0.0
-            }
-            lastTimestamp = location.time 
-            isInitialized = true
-            // Log.d("EKF", "Initialized with location: Lat=${x[0,0]}, Lon=${x[1,0]}, VelN=${x[2,0]}, VelE=${x[3,0]}")
+    fun update(vehicleState: VehicleState) {
+        val currentTime = vehicleState.timestamp
+        if (!initialized) {
+            Log.d(TAG, "Initializing EKF with first GPS location.")
+            x.set(0, 0, vehicleState.latitude)
+            x.set(1, 0, vehicleState.longitude)
+            x.set(2, 0, vehicleState.speed)
+            x.set(3, 0, vehicleState.bearing)
+            P = SimpleMatrix.diag(1.0, 1.0, 1.0, 1.0) // Reset covariance for initial fix
+            this.lastTimestamp = currentTime
+            initialized = true
             return
         }
 
-        val z = Matrix(2, 1)
-        z[0, 0] = location.latitude
-        z[1, 0] = location.longitude
+        val dt = (currentTime - this.lastTimestamp) / 1000.0 // Delta time in seconds
+        if (dt < 0) {
+             Log.w(TAG, "Update call received with timestamp older than last update. Skipping. Current: $currentTime, Last: ${this.lastTimestamp}")
+            return // Stale update
+        }
+        // If dt is very large, it might indicate GPS outage. Consider resetting P or increasing Q temporarily.
+        if (dt > 10.0) { // e.g., if more than 10s since last GPS update
+            Log.w(TAG, "Large dt ($dt s) since last GPS update. Process noise Q might be too small.")
+            // Optionally, increase process noise Q here to reflect higher uncertainty
+            // P = P.plus(Q.scale(dt)) // Example: Scale Q by dt or a factor of dt
+        }
 
-        val H = Matrix(2, 4)
-        H[0, 0] = 1.0 
-        H[1, 1] = 1.0 
 
-        val y = z - (H * x)
-        val S = H * P * H.transpose() + R
-        val K = P * H.transpose() * S.inverse()
-        x += (K * y)
-        P = (Matrix.identity(4) - (K * H)) * P
-        lastTimestamp = location.time
-        // Log.d("EKF", "Updated state: ${x.transpose()}, P: $P")
+        // Measurement vector z
+        val z = SimpleMatrix(4, 1)
+        z.set(0, 0, vehicleState.latitude)
+        z.set(1, 0, vehicleState.longitude)
+        z.set(2, 0, vehicleState.speed)
+        z.set(3, 0, vehicleState.bearing)
+
+        // Measurement residual (innovation): y = z - H * x
+        val y = z.minus(H.mult(x))
+
+        // Innovation covariance: S = H * P * H^T + R
+        val S = H.mult(P).mult(H.transpose()).plus(R)
+
+        // Kalman gain: K = P * H^T * S^-1
+        val K = P.mult(H.transpose()).mult(S.invert())
+
+        // Update state estimate: x_new = x + K * y
+        x = x.plus(K.mult(y))
+
+        // Update covariance estimate: P_new = (I - K * H) * P
+        val I = SimpleMatrix.identity(x.numRows())
+        P = (I.minus(K.mult(H))).mult(P)
+
+        this.lastTimestamp = currentTime
+        Log.d(TAG, "Update: dt=$dt. New updated state x: [${x.get(0,0)}, ${x.get(1,0)}, ${x.get(2,0)}, ${x.get(3,0)}]")
     }
 
-    fun getLocation(): Location {
-        val fusedLocation = Location("EKF")
-        if (!isInitialized) {
-            fusedLocation.time = System.currentTimeMillis()
-            return fusedLocation
-        }
-        fusedLocation.latitude = x[0, 0]
-        fusedLocation.longitude = x[1, 0]
-
-        val velocityN = x[2, 0]
-        val velocityE = x[3, 0]
-
-        fusedLocation.speed = sqrt(velocityN * velocityN + velocityE * velocityE).toFloat()
-
-        var bearingDegrees = Math.toDegrees(atan2(velocityE, velocityN))
-        if (bearingDegrees < 0) {
-            bearingDegrees += 360.0
-        }
-        fusedLocation.bearing = bearingDegrees.toFloat()
-        fusedLocation.time = lastTimestamp 
-
-        // Log.d("EKF", "GetLocation: Lat=${fusedLocation.latitude}, Lon=${fusedLocation.longitude}, Speed=${fusedLocation.speed}, Bearing=${fusedLocation.bearing}")
-        return fusedLocation
+    fun getState(): VehicleState {
+        return VehicleState(
+            latitude = x.get(0, 0),
+            longitude = x.get(1, 0),
+            speed = x.get(2, 0),
+            bearing = x.get(3, 0),
+            timestamp = this.lastTimestamp
+        )
     }
-
-    fun isInitialized(): Boolean = isInitialized
 }

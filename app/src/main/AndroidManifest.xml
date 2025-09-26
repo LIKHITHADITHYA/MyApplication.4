@@ -5,7 +5,7 @@
     <!-- Location Permissions -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" /> uncomment if needed for background location on Android 10+ -->
 
     <!-- Network/Internet Permissions -->
@@ -15,27 +15,42 @@
     <!-- Bluetooth Permissions -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
         android:minSdkVersion="31" />
 
     <!-- Wi-Fi Direct Permissions -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:minSdkVersion="31" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- Other Permissions -->
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE"
+        tools:ignore="ForegroundServicesPolicy" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Required for P2P to work on older versions -->
-    <uses-feature android:name="android.hardware.wifi.direct" android:required="true" />
+    <!-- Hardware Features -->
+    <uses-feature
+        android:name="android.hardware.wifi.direct"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
 
     <application
+        android:name=".MyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -46,14 +61,6 @@
         android:theme="@style/Theme.MyApplication"
         tools:targetApi="31">
 
-        <!-- Google Maps API Key -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyCIwCSv3hEJa0VvA44pYRsaz4IcS8agqbc" />
-
-        <!-- Required for Google Maps SDK -->
-        <uses-library android:name="org.apache.http.legacy" android:required="false" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -62,9 +69,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".services.NavigationService"
-            android:foregroundServiceType="location"/>
-        <receiver android:name=".services.ProximityAlertReceiver" />
+        <service
+            android:name=".services.NavigationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+        <receiver
+            android:name=".services.ProximityAlertReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
