@@ -1,6 +1,6 @@
-package com.example.myapplication.data
+package com.example.myapplication.ui // Adjust package as necessary, e.g., .data or .core
 
-data class VehicleState(
+data class VehicleUiState(
     val latitude: Double,
     val longitude: Double,
     val speed: Double,

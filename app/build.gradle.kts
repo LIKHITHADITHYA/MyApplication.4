@@ -17,13 +17,14 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        multiDexEnabled = true // Added for multidex
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -37,6 +38,8 @@ android {
     }
     kotlinOptions {
         jvmTarget = "11"
+        languageVersion = "1.9"
+        apiVersion = "1.9"
     }
     buildFeatures {
         viewBinding = true
@@ -64,6 +67,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material) // For XML Material Components & Theme.Material3.DayNight.NoActionBar
+    implementation("androidx.multidex:multidex:2.0.1") // Added for multidex
 
     // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2024.03.00")) // BOM for Kotlin 1.9.22
@@ -73,7 +77,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
-
+    implementation("androidx.preference:preference-ktx:1.2.1")
     // For XML Navigation Components (if activity_main.xml or other XML layouts use NavHostFragment)
     implementation(libs.androidx.navigation.fragment.ktx)
     implementation(libs.androidx.navigation.ui.ktx)
@@ -94,7 +98,7 @@ dependencies {
 
     // Location Services (existing)
     implementation("com.google.android.gms:play-services-location:21.3.0")
-    
+
     // OSMDroid (existing)
     implementation("org.osmdroid:osmdroid-android:6.1.16")
 
@@ -109,7 +113,7 @@ dependencies {
 
     // EJML Dependency (existing)
     implementation("org.ejml:ejml-simple:0.41")
-
+    implementation("androidx.preference:preference-ktx:1.2.1") // Or the latest version
     // Hilt (existing)
     implementation("com.google.dagger:hilt-android:2.51.1")
     kapt("com.google.dagger:hilt-compiler:2.51.1")
@@ -120,4 +124,18 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material) // For XML Material Components & Theme.Material3.DayNight.NoActionBar
+    implementation("androidx.multidex:multidex:2.0.1") // Added for multidex
+
+    // AndroidX Preference
+    implementation("androidx.preference:preference-ktx:1.2.1") // <--- ADD THIS LINE
+
+    // Jetpack Compose
+    implementation(platform("androidx.compose:compose-bom:2024.03.00")) // BOM for Kotlin 1.9.22
+    // ... other dependencies
 }

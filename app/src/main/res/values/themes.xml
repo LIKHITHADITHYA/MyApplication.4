@@ -18,5 +18,26 @@
         <!-- Status bar color. -->
         <item name="android:statusBarColor">?attr/colorPrimaryDark</item>
         <!-- Customize your theme here. -->
+
+        <!-- Add this line for Preference compatibility -->
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay.v14.Material</item>
     </style>
+
+    <!-- <style name="Theme.MyApplication" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay</item>
+    </style> -->
+
+    <!-- <style name="Theme.MyApplication" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay</item>
+    </style> -->
+
+        <!-- Base application theme. -->
+        <!-- <style name="Theme.MyApplication" parent="Theme.Material3.DayNight.NoActionBar">
+            Other theme attributes
+        </style> -->
+            
+        <!-- Base application theme. -->
+        <!-- <style name="Theme.MyApplication" parent="Theme.Material3.DayNight.NoActionBar">
+            Other theme attributes
+        </style> -->
 </resources>

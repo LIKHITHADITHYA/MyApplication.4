@@ -11,14 +11,6 @@ open class Event<out T>(private val content: T) {
     var hasBeenHandled = false
         private set // Allow external read but not write
 
-    fun getContentIfNotHandled(): T? {
-        return if (hasBeenHandled) {
-            null
-        } else {
-            hasBeenHandled = true
-            content
-        }
-    }
     @Suppress("unused") // Might be used by observers
     fun peekContent(): T = content
 }
@@ -37,7 +29,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     // LiveData for GNSS toggle action request
     // Parameter: Boolean - represents the desired state (true to start, false to stop)
     private val _gnssToggleRequest = MutableLiveData<Boolean>()
-    val gnssToggleRequest: LiveData<Boolean> = _gnssToggleRequest
 
     // LiveData for P2P action requests
     private val _p2pActionRequest = MutableLiveData<Event<P2pAction>>()
@@ -50,11 +41,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun loadNickname() {
         val app = getApplication<Application>()
-        if (app == null) {
-            Log.e("SettingsViewModel", "Application context is null in loadNickname.")
-            _nickname.value = "Error: Context null"
-            return
-        }
         try {
             // Using com.example.myapplication.util.AppPreferences directly as it's an object
             val currentNickname = com.example.myapplication.util.AppPreferences.getUserNickname(app)
@@ -68,10 +54,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun saveNickname(newNickname: String) {
         val app = getApplication<Application>()
-        if (app == null) {
-            Log.e("SettingsViewModel", "Application context is null in saveNickname.")
-            return
-        }
         try {
             com.example.myapplication.util.AppPreferences.setUserNickname(app, newNickname)
             _nickname.value = newNickname // Update LiveData after saving

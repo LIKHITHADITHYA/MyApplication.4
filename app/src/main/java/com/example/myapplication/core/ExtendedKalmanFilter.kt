@@ -1,8 +1,11 @@
 package com.example.myapplication.core
 
+
 import android.util.Log
 import com.example.myapplication.data.VehicleState
 import org.ejml.simple.SimpleMatrix
+
+// Removed model declarations
 
 class ExtendedKalmanFilter {
     private var x: SimpleMatrix // State vector [lat, lon, speed, bearing]
@@ -21,9 +24,19 @@ class ExtendedKalmanFilter {
         // Initial state: [lat, lon, speed, bearing]
         x = SimpleMatrix(4, 1)
         P = SimpleMatrix.diag(1.0, 1.0, 1.0, 1.0)       // Initial uncertainty
-        Q = SimpleMatrix.diag(0.1, 0.1, 0.5, 0.1)      // Process noise: tuned for typical vehicle dynamics
-        R = SimpleMatrix.diag(10.0, 10.0, 1.0, 10.0)     // Measurement noise: GPS typical errors (lat/lon in meters, speed m/s, bearing degrees)
-        
+        Q = SimpleMatrix.diag(
+            0.1,
+            0.1,
+            0.5,
+            0.1
+        )      // Process noise: tuned for typical vehicle dynamics
+        R = SimpleMatrix.diag(
+            10.0,
+            10.0,
+            1.0,
+            10.0
+        )     // Measurement noise: GPS typical errors (lat/lon in meters, speed m/s, bearing degrees)
+
         // Measurement matrix: maps state to measurement [lat, lon, speed, bearing]
         H = SimpleMatrix.identity(4)
     }
@@ -38,7 +51,10 @@ class ExtendedKalmanFilter {
 
         val dt = (timestamp - this.lastTimestamp) / 1000.0 // Delta time in seconds
         if (dt <= 0) {
-            Log.w(TAG, "Predict call skipped: dt is zero or negative ($dt s). Current timestamp: $timestamp, last: ${this.lastTimestamp}")
+            Log.w(
+                TAG,
+                "Predict call skipped: dt is zero or negative ($dt s). Current timestamp: $timestamp, last: ${this.lastTimestamp}"
+            )
             return // Avoid division by zero or negative time
         }
 
@@ -48,21 +64,37 @@ class ExtendedKalmanFilter {
 
         // State transition matrix A
         val A = SimpleMatrix.identity(4)
-        A.set(0, 2, dt) // lat = lat + speed * dt (simplified, should be speed * cos(bearing) * dt / R_earth for actual distance)
-        A.set(1, 2, dt) // lon = lon + speed * dt (simplified, should be speed * sin(bearing) * dt / (R_earth * cos(lat)) for actual distance)
+        A.set(
+            0,
+            2,
+            dt
+        ) // lat = lat + speed * dt (simplified, should be speed * cos(bearing) * dt / R_earth for actual distance)
+        A.set(
+            1,
+            2,
+            dt
+        ) // lon = lon + speed * dt (simplified, should be speed * sin(bearing) * dt / (R_earth * cos(lat)) for actual distance)
         // Speed is predicted as constant (x.set(2,0, x.get(2,0) + ax*dt) removed due to noise)
         // Bearing is predicted as constant (can be enhanced with gyroscope: x.set(3,0, x.get(3,0) + omega*dt) );
 
         // Predict state: x_pred = A * x
         x = A.mult(x)
-        
+
         // Predict covariance: P_pred = A * P * A^T + Q
         P = A.mult(P).mult(A.transpose()).plus(Q)
 
         // No need to update lastTimestamp here as predict is driven by sensor timestamps,
         // and 'dt' for GPS update should be relative to the *last GPS timestamp*.
         // this.lastTimestamp = timestamp // This would make dt for GPS update very small if sensors are faster.
-        Log.d(TAG, "Predict: dt=$dt, ax=$ax. New predicted state x: [${x.get(0,0)}, ${x.get(1,0)}, ${x.get(2,0)}, ${x.get(3,0)}]")
+        Log.d(
+            TAG,
+            "Predict: dt=$dt, ax=$ax. New predicted state x: [${x.get(0, 0)}, ${
+                x.get(
+                    1,
+                    0
+                )
+            }, ${x.get(2, 0)}, ${x.get(3, 0)}]"
+        )
     }
 
     fun update(vehicleState: VehicleState) {
@@ -81,12 +113,18 @@ class ExtendedKalmanFilter {
 
         val dt = (currentTime - this.lastTimestamp) / 1000.0 // Delta time in seconds
         if (dt < 0) {
-             Log.w(TAG, "Update call received with timestamp older than last update. Skipping. Current: $currentTime, Last: ${this.lastTimestamp}")
+            Log.w(
+                TAG,
+                "Update call received with timestamp older than last update. Skipping. Current: $currentTime, Last: ${this.lastTimestamp}"
+            )
             return // Stale update
         }
         // If dt is very large, it might indicate GPS outage. Consider resetting P or increasing Q temporarily.
         if (dt > 10.0) { // e.g., if more than 10s since last GPS update
-            Log.w(TAG, "Large dt ($dt s) since last GPS update. Process noise Q might be too small.")
+            Log.w(
+                TAG,
+                "Large dt ($dt s) since last GPS update. Process noise Q might be too small."
+            )
             // Optionally, increase process noise Q here to reflect higher uncertainty
             // P = P.plus(Q.scale(dt)) // Example: Scale Q by dt or a factor of dt
         }
@@ -116,16 +154,18 @@ class ExtendedKalmanFilter {
         P = (I.minus(K.mult(H))).mult(P)
 
         this.lastTimestamp = currentTime
-        Log.d(TAG, "Update: dt=$dt. New updated state x: [${x.get(0,0)}, ${x.get(1,0)}, ${x.get(2,0)}, ${x.get(3,0)}]")
-    }
-
-    fun getState(): VehicleState {
-        return VehicleState(
-            latitude = x.get(0, 0),
-            longitude = x.get(1, 0),
-            speed = x.get(2, 0),
-            bearing = x.get(3, 0),
-            timestamp = this.lastTimestamp
+        // ... (rest of your update function code)
+        Log.d(
+            TAG,
+            "Update: dt=$dt. New updated state x: [${x.get(0, 0)}, ${
+                x.get(
+                    1,
+                    0
+                )
+            }, ${x.get(2, 0)}, ${x.get(3, 0)}]"
         )
-    }
-}
+    } // This closes the update function
+
+} // <-- Add this closing brace for the ExtendedKalmanFilter class
+
+

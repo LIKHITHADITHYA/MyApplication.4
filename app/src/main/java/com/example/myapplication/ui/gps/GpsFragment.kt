@@ -116,7 +116,7 @@ class GpsFragment : Fragment(), OnMapReadyCallback, TextToSpeech.OnInitListener 
             }
         }
 
-        viewModel.currentHeading.observe(viewLifecycleOwner) { heading ->
+        viewModel.currentBearing.observe(viewLifecycleOwner) { heading -> 
             myLocationMarker?.rotation = heading
         }
     }

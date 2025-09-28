@@ -1,353 +1,285 @@
 package com.example.myapplication
 
 import android.Manifest
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
-import android.os.Build
+import android.os.Looper
 import android.util.Log
-import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
-import androidx.core.content.IntentCompat
-import java.io.EOFException
+import com.example.myapplication.data.VehicleData // Assuming your VehicleData class path
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import kotlin.concurrent.thread
+import java.util.concurrent.Executors
+import javax.inject.Named // Added import for @Named
 
-class P2pCommunicationManager(
-    private val context: Context,
-    private val manager: WifiP2pManager,
-    private val channel: WifiP2pManager.Channel,
-    private val dataListener: OnDataReceivedListener
+class P2pCommunicationManager @AssistedInject constructor(
+    @ApplicationContext private val context: Context, // Injected by Hilt
+    private val wifiP2pManager: WifiP2pManager?,      // Injected by Hilt
+    @Named("mainLooper") private val looper: Looper,   // Injected by Hilt with qualifier
+    @Assisted private val listener: OnDataReceivedListener // Provided at runtime by NavigationService
 ) {
 
-    interface OnDataReceivedListener {
-        fun onVehicleDataReceived(data: VehicleData) // Assuming VehicleData is defined elsewhere and imported if necessary
-        fun onConnectionInfoAvailable(wifiP2pInfo: WifiP2pInfo)
-    }
-
-    private val tag = "P2pCommunicationManager"
-    private val serverPort = 8888
-
+    private var channel: WifiP2pManager.Channel?
+    private val intentFilter = IntentFilter()
+    private var receiver: WifiDirectBroadcastReceiver? = null // This will now refer to the standalone class
+    private val executorService = Executors.newFixedThreadPool(2) // For server and client threads
     private var serverSocket: ServerSocket? = null
-    private val clientSockets = mutableListOf<Socket>()
+    private var clientSockets = mutableListOf<Socket>()
 
-    private var clientSocket: Socket? = null
-    private var clientOutputStream: ObjectOutputStream? = null
-    private val clientSocketLock = Any()
-
-    private var isGroupOwner: Boolean = false
-
-    private val intentFilter = IntentFilter().apply {
-        addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-        addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+    interface OnDataReceivedListener {
+        fun onVehicleDataReceived(data: VehicleData)
+        fun onConnectionInfoAvailable(wifiP2pInfo: WifiP2pInfo) // Consistent name
+        fun onPeersChanged(peers: List<WifiP2pDevice>)
+        fun onP2pStatusChanged(isEnabled: Boolean)
     }
 
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
-                    val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
-                    if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                        Log.d(tag, "Wi-Fi Direct is ENABLED.")
-                    } else {
-                        Log.d(tag, "Wi-Fi Direct is DISABLED.")
-                    }
-                }
-                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    if (hasLocationPermissions()) {
-                        try {
-                            manager.requestPeers(channel, peerListListener)
-                        } catch (e: SecurityException) {
-                            Log.e(tag, "SecurityException in requestPeers: ${e.message}")
-                        }
-                    } else {
-                        Log.w(tag, "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct peer request.")
-                    }
-                }
-                WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
-                    manager.requestConnectionInfo(channel) { info ->
-                        info?.let { dataListener.onConnectionInfoAvailable(it) }
-                        Log.d(tag, "Connection info available: Group Owner: ${info?.isGroupOwner}, Group Owner Address: ${info?.groupOwnerAddress}")
-                        if (info?.groupFormed == true) {
-                            if (info.isGroupOwner) {
-                                isGroupOwner = true
-                                startReceivingData()
-                                Log.d(tag, "Acted as Group Owner and started data receiving server.")
-                            } else {
-                                isGroupOwner = false
-                                Log.d(tag, "Acted as Client.")
-                            }
-                        } else {
-                            Log.d(tag, "Wi-Fi Direct disconnected or group not formed. Stopping data transfer roles.")
-                            stopReceivingData()
-                            synchronized(clientSocketLock) {
-                                stopSendingData()
-                            }
-                            isGroupOwner = false
-                        }
-                    }
-                }
-                WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
-                    val device = IntentCompat.getParcelableExtra(intent, WifiP2pManager.EXTRA_WIFI_P2P_DEVICE, WifiP2pDevice::class.java)
-                    Log.d(tag, "Device status changed: ${device?.status}")
-                }
+    @AssistedFactory
+    interface Factory {
+        fun create(listener: OnDataReceivedListener): P2pCommunicationManager
+    }
+
+    init {
+        if (wifiP2pManager == null) {
+            Log.e(TAG, "WifiP2pManager is null. P2P features will not work.")
+            this.channel = null
+        } else {
+            // The looper passed to initialize should be the injected one.
+            this.channel = wifiP2pManager.initialize(context, this.looper) { 
+                Log.d(TAG, "P2P Channel disconnected. Trying to re-initialize or handle.")
+            }
+            if (this.channel == null) {
+                Log.e(
+                    TAG,
+                    "Failed to initialize WifiP2pManager.Channel. P2P features may not work."
+                )
             }
         }
+
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
     }
 
-    private val peerListListener = WifiP2pManager.PeerListListener { peers ->
-        val refreshedPeers = peers.deviceList
-        if (refreshedPeers.isNotEmpty()) {
-            val device = refreshedPeers.first()
-            Log.d(tag, "Found peer: ${device.deviceName} - ${device.deviceAddress}. Attempting to connect.")
-            connectToPeer(device)
-        } else {
-            Log.d(tag, "No peers found.")
-        }
-    }
-
-    @RequiresApi(Build.VERSION_CODES.O)
     fun registerReceiver() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, intentFilter, Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(receiver, intentFilter)
+        if (wifiP2pManager == null || channel == null) {
+            Log.e(TAG, "Cannot register P2P receiver: WifiP2pManager or Channel is null.")
+            return
         }
-        Log.d(tag, "Wi-Fi Direct receiver registered.")
-    }
-
-    fun unregisterReceiver() {
-        context.unregisterReceiver(receiver)
-        Log.d(tag, "Wi-Fi Direct receiver unregistered.")
+        if (receiver == null) {
+            receiver = WifiDirectBroadcastReceiver(wifiP2pManager, channel!!, this.listener)
+            context.registerReceiver(receiver, intentFilter)
+            Log.d(TAG, "Wi-Fi Direct receiver registered.")
+        } else {
+            Log.d(TAG, "Wi-Fi Direct receiver already registered.")
+        }
     }
 
     fun discoverPeers() {
-        if (!hasLocationPermissions()) {
-            Log.w(tag, "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct discovery.")
+        if (wifiP2pManager == null || channel == null) {
+            Log.w(TAG, "Cannot discover peers: WifiP2pManager or Channel is null.")
+            listener.onP2pStatusChanged(false) 
             return
         }
-        try {
-            manager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    Log.d(tag, "Peer discovery initiated successfully.")
-                }
-                override fun onFailure(reason: Int) {
-                    Log.e(tag, "Peer discovery initiation failed: $reason")
-                }
-            })
-        } catch (e: SecurityException) {
-             Log.e(tag, "SecurityException in discoverPeers: ${e.message}")
-        }
-    }
-
-    private fun connectToPeer(device: WifiP2pDevice) {
-        val config = WifiP2pConfig().apply {
-            deviceAddress = device.deviceAddress
-        }
-        if (!hasLocationPermissions()) {
-            Log.w(tag, "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct connection.")
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.NEARBY_WIFI_DEVICES
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.e(TAG, "Permissions for discovering peers not granted.")
             return
         }
-        try {
-            manager.connect(channel, config, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    Log.d(tag, "Connection initiated successfully to ${device.deviceAddress}.")
-                }
-                override fun onFailure(reason: Int) {
-                    Log.e(tag, "Connection initiation failed to ${device.deviceAddress}: $reason")
-                }
-            })
-        } catch (e: SecurityException) {
-            Log.e(tag, "SecurityException in connect: ${e.message}")
-        }
-    }
-
-    fun createGroup() {
-        if (!hasLocationPermissions()) {
-            Log.w(tag, "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct group creation.")
-            return
-        }
-        try {
-            manager.createGroup(channel, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    Log.d(tag, "P2P group creation initiated successfully.")
-                }
-                override fun onFailure(reason: Int) {
-                    Log.e(tag, "P2P group creation failed: $reason")
-                }
-            })
-        } catch (e: SecurityException) {
-            Log.e(tag, "SecurityException in createGroup: ${e.message}")
-        }
-    }
-
-    fun removeGroup() {
-        if (!hasLocationPermissions()) {
-            Log.w(tag, "Missing LOCATION or NEARBY_WIFI_DEVICES permission for Wi-Fi Direct group removal (checking anyway).")
-        }
-        try {
-            manager.removeGroup(channel, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() {
-                    Log.d(tag, "P2P group removal initiated successfully.")
-                }
-                override fun onFailure(reason: Int) {
-                    Log.e(tag, "P2P group removal failed: $reason")
-                }
-            })
-        } catch (e: SecurityException) {
-            Log.e(tag, "SecurityException in removeGroup: ${e.message}")
-        }
-    }
-
-    fun sendData(data: VehicleData, hostAddress: InetAddress) {
-        thread {
-            try {
-                synchronized(clientSocketLock) {
-                    if (clientSocket == null || clientSocket!!.isClosed) {
-                        clientSocket = Socket()
-                        clientSocket!!.connect(InetSocketAddress(hostAddress, serverPort), 5000)
-                        clientOutputStream = ObjectOutputStream(clientSocket!!.getOutputStream())
-                        Log.d(tag, "Connected to Group Owner for sending data: $hostAddress")
-                    }
-                    clientOutputStream?.writeObject(data)
-                    clientOutputStream?.flush()
-                    Log.d(tag, "VehicleData sent successfully.")
-                }
-            } catch (e: Exception) {
-                Log.e(tag, "Error sending data: ${e.message}")
-                e.printStackTrace()
-                synchronized(clientSocketLock) {
-                    stopSendingData()
-                }
+        wifiP2pManager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.d(TAG, "Peer discovery initiated.")
             }
+
+            override fun onFailure(reasonCode: Int) {
+                Log.e(TAG, "Peer discovery failed: $reasonCode")
+                listener.onP2pStatusChanged(false) 
+            }
+        })
+    }
+
+    val peerListListener = WifiP2pManager.PeerListListener {
+        listener.onPeersChanged(it.deviceList.toList())
+    }
+
+    val connectionInfoListener = WifiP2pManager.ConnectionInfoListener {
+        listener.onConnectionInfoAvailable(it)
+        if (it.groupFormed && it.isGroupOwner) {
+            startServerToReceiveData()
+        } else if (it.groupFormed) {
+            // Client connected to a group owner
         }
     }
 
-    fun startReceivingData() {
+    fun startServerToReceiveData() {
         if (serverSocket != null && !serverSocket!!.isClosed) {
-            Log.d(tag, "Server socket already running.")
+            Log.d(TAG, "P2P Server already running.")
             return
         }
-        thread {
+        executorService.execute {
             try {
-                serverSocket = ServerSocket(serverPort)
-                Log.d(tag, "P2P Server started on port $serverPort.")
+                serverSocket = ServerSocket(GROUP_OWNER_PORT)
+                Log.d(TAG, "P2P Server started on port $GROUP_OWNER_PORT, waiting for clients.")
                 while (!Thread.currentThread().isInterrupted && serverSocket?.isClosed == false) {
                     try {
-                        val client = serverSocket!!.accept()
-                        Log.d(tag, "Client connected from ${client.inetAddress}.")
+                        val clientSocket = serverSocket!!.accept()
                         synchronized(clientSockets) {
-                            clientSockets.add(client)
+                            clientSockets.add(clientSocket)
                         }
-                        thread { handleClient(client) }
-                    } catch (e: Exception) {
-                        if (serverSocket?.isClosed == false) {
-                            Log.e(tag, "Error accepting client connection: ${e.message}")
-                        } else {
-                            Log.d(tag, "Server socket closed, exiting accept loop.")
+                        Log.d(TAG, "P2P Client connected from ${clientSocket.inetAddress}")
+                        handleClientSocket(clientSocket)
+                    } catch (e: IOException) {
+                        if (serverSocket?.isClosed == true) {
+                            Log.i(TAG, "Server socket closed, exiting accept loop.")
                             break
+                        } else {
+                            Log.e(TAG, "P2P Server accept error: ${e.message}", e)
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "P2P Server failed to start or run: ${e.message}", e)
+            } finally {
+                Log.d(TAG, "P2P Server thread finishing.")
+            }
+        }
+    }
+
+    private fun handleClientSocket(socket: Socket) {
+        executorService.execute {
+            try {
+                ObjectInputStream(socket.getInputStream()).use { ois ->
+                    while (socket.isConnected && !socket.isClosed) {
+                        val data = ois.readObject() as? VehicleData
+                        data?.let {
+                            Log.d(TAG, "P2P Data received from client ${socket.inetAddress}: $it")
+                            listener.onVehicleDataReceived(it)
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.e(tag, "Error in server setup: ${e.message}")
-            }
-        }
-    }
-
-    private fun handleClient(client: Socket) {
-        try {
-            val inputStream = ObjectInputStream(client.getInputStream())
-            while (client.isConnected && !client.isClosed) {
+                Log.e(TAG, "P2P Error reading from client ${socket.inetAddress}: ${e.message}", e)
+            } finally {
                 try {
-                    val receivedData = inputStream.readObject() as? VehicleData
-                    receivedData?.let { data ->
-                        Log.d(tag, "Received VehicleData: ${data.deviceId}")
-                        dataListener.onVehicleDataReceived(data)
+                    socket.close()
+                    synchronized(clientSockets) {
+                        clientSockets.remove(socket)
                     }
-                } catch (_: EOFException) {
-                    Log.d(tag, "Client disconnected: ${client.inetAddress}")
-                    break 
+                    Log.d(TAG, "P2P Client socket closed: ${socket.inetAddress}")
+                } catch (e: IOException) {
+                    Log.e(TAG, "P2P Error closing client socket: ${e.message}")
                 }
             }
-        } catch (e: Exception) {
-            Log.e(tag, "Error handling client ${client.inetAddress}: ${e.message}")
-        } finally {
+        }
+    }
+
+    fun sendDataToGroupOwner(data: VehicleData, groupOwnerAddress: InetAddress) {
+        executorService.execute {
             try {
-                client.close()
-                Log.d(tag, "Closed connection for ${client.inetAddress}")
-            } catch (e: Exception) {
-                Log.e(tag, "Error closing client socket: ${e.message}")
-            }
-            synchronized(clientSockets) {
-                clientSockets.remove(client)
-            }
-        }
-    }
-
-    fun stopReceivingData() {
-        try {
-            if (serverSocket != null && !serverSocket!!.isClosed) {
-                serverSocket?.close()
-                serverSocket = null
-                Log.d(tag, "P2P Server stopped.")
-            }
-            synchronized(clientSockets) {
-                clientSockets.toList().forEach { 
-                    try {
-                        it.close() 
-                    } catch (e: Exception) {
-                        Log.e(tag, "Error closing client socket during stopReceivingData: ${e.message}")
+                Socket().use { socket ->
+                    socket.connect(
+                        java.net.InetSocketAddress(groupOwnerAddress, GROUP_OWNER_PORT),
+                        5000
+                    )
+                    Log.d(TAG, "P2P Sending data to GO: $data")
+                    ObjectOutputStream(socket.getOutputStream()).use { oos ->
+                        oos.writeObject(data)
+                        oos.flush()
                     }
                 }
-                clientSockets.clear()
+            } catch (e: IOException) {
+                Log.e(TAG, "P2P Client error sending data to GO: ${e.message}", e)
             }
-        } catch (e: Exception) {
-            Log.e(tag, "Error stopping server: ${e.message}")
         }
     }
 
-    fun stopSendingData() {
-        try {
-            clientOutputStream?.close()
-            clientSocket?.close()
-        } catch (e: Exception) {
-            Log.e(tag, "Error closing client socket/stream: ${e.message}")
-        } finally {
-            clientOutputStream = null
-            clientSocket = null
-            Log.d(tag, "P2P client socket closed.")
-        }
-    }
-
-    private fun hasLocationPermissions(): Boolean {
-        val fineLocationGranted = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val nearbyWifiDevicesGranted = ActivityCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
-            fineLocationGranted && nearbyWifiDevicesGranted
-        } else {
-            fineLocationGranted
+    fun broadcastDataToClients(data: VehicleData) {
+        synchronized(clientSockets) {
+            val socketsToRemove = mutableListOf<Socket>()
+            clientSockets.forEach { socket ->
+                if (socket.isConnected && !socket.isClosed) {
+                    executorService.execute {
+                        try {
+                            ObjectOutputStream(socket.getOutputStream()).use { oos ->
+                                oos.writeObject(data)
+                                oos.flush()
+                                Log.d(TAG, "P2P Broadcasted data to client ${socket.inetAddress}")
+                            }
+                        } catch (e: IOException) {
+                            Log.e(
+                                TAG,
+                                "P2P Error broadcasting to client ${socket.inetAddress}: ${e.message}"
+                            )
+                            socketsToRemove.add(socket) 
+                        }
+                    }
+                } else {
+                    socketsToRemove.add(socket)
+                }
+            }
+            clientSockets.removeAll(socketsToRemove.toSet())
+            socketsToRemove.forEach {
+                try {
+                    it.close()
+                } catch (e: IOException) {
+                    Log.e(TAG, "Error closing failed client socket", e)
+                }
+            }
         }
     }
 
     fun close() {
-        unregisterReceiver()
-        stopReceivingData()
-        synchronized(clientSocketLock) {
-            stopSendingData()
+        Log.d(TAG, "Closing P2pCommunicationManager.")
+        try {
+            if (receiver != null) {
+                context.unregisterReceiver(receiver)
+                receiver = null
+                Log.d(TAG, "Wi-Fi Direct receiver unregistered.")
+            }
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Error unregistering P2P receiver: ${e.message}")
         }
+        try {
+            serverSocket?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing server socket", e)
+        }
+        serverSocket = null
+        synchronized(clientSockets) {
+            clientSockets.forEach {
+                try {
+                    it.close()
+                } catch (e: IOException) {
+                    Log.e(TAG, "Error closing client socket $it", e)
+                }
+            }
+            clientSockets.clear()
+        }
+        executorService.shutdownNow()
+        Log.d(TAG, "P2pCommunicationManager closed.")
+    }
+
+    companion object {
+        internal const val TAG = "P2pCommunicationManager"
+        private const val GROUP_OWNER_PORT = 8988
     }
 }

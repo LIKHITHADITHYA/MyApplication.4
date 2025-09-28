@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
@@ -33,7 +34,6 @@ import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DonutSmall
 import androidx.compose.material.icons.filled.Error
-// import androidx.compose.material.icons.filled.HelpOutline // Keep this line commented or remove if not used elsewhere
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.LocationSearching
@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,12 +51,15 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -92,60 +96,41 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 import javax.inject.Inject
 
 @Immutable
 data class StableLatLng(val latLng: LatLng) {
     val latitude: Double get() = latLng.latitude
     val longitude: Double get() = latLng.longitude
-
     constructor(latitude: Double, longitude: Double) : this(LatLng(latitude, longitude))
 }
 
-// Data classes for UI state
-data class GnssStatusInfo(
-    val statusText: String,
-    val icon: ImageVector,
-    val color: Color
-)
-
-data class ConnectivityStatusInfo(
-    val statusText: String,
-    val icon: ImageVector,
-    val color: Color
-)
+data class GnssStatusInfo(val statusText: String, val icon: ImageVector, val color: Color)
+data class ConnectivityStatusInfo(val statusText: String, val icon: ImageVector, val color: Color)
 
 @Immutable
 data class PeerDeviceDisplay(
     val id: String,
-    val position: StableLatLng, // Uses StableLatLng
+    val position: StableLatLng,
     val icon: ImageVector = Icons.Filled.DirectionsCar
 )
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val application: Application,
+    application: Application,
 ) : AndroidViewModel(application) {
 
     private val _currentSpeedKmh = MutableStateFlow(0.0f)
     val currentSpeedKmh: StateFlow<Float> = _currentSpeedKmh.asStateFlow()
-
-    private val _gnssStatus = MutableStateFlow(
-        GnssStatusInfo("Initializing...", Icons.Filled.LocationSearching, Color.Gray)
-    )
+    private val _gnssStatus = MutableStateFlow(GnssStatusInfo("Initializing...", Icons.Filled.LocationSearching, Color.Gray))
     val gnssStatus: StateFlow<GnssStatusInfo> = _gnssStatus.asStateFlow()
-
-    private val _connectivityStatus = MutableStateFlow(
-        ConnectivityStatusInfo("Initializing...", Icons.Filled.WifiOff, Color.Gray)
-    )
+    private val _connectivityStatus = MutableStateFlow(ConnectivityStatusInfo("Initializing...", Icons.Filled.WifiOff, Color.Gray))
     val connectivityStatus: StateFlow<ConnectivityStatusInfo> = _connectivityStatus.asStateFlow()
-
     private val _userLocation = MutableStateFlow(StableLatLng(0.0, 0.0))
     val userLocation: StateFlow<StableLatLng> = _userLocation.asStateFlow()
-
     private val _userHeading = MutableStateFlow(0.0f)
     val userHeading: StateFlow<Float> = _userHeading.asStateFlow()
-
     private val _peerDevices = MutableStateFlow<List<PeerDeviceDisplay>>(emptyList())
     val peerDevices: StateFlow<List<PeerDeviceDisplay>> = _peerDevices.asStateFlow()
 
@@ -158,181 +143,80 @@ class MainViewModel @Inject constructor(
             navigationService = binder?.getService()
             isServiceBound.value = true
             Log.d("MainViewModel", "NavigationService connected")
-            navigationService?.let {
-                startCollectingDataFromService(it)
-            }
+            navigationService?.let { startCollectingDataFromService(it) }
         }
-
         override fun onServiceDisconnected(name: ComponentName?) {
             navigationService = null
             isServiceBound.value = false
             Log.d("MainViewModel", "NavigationService disconnected")
-            _gnssStatus.value =
-                GnssStatusInfo("Service Disconnected", Icons.Filled.Error, Color.Red)
-            _connectivityStatus.value =
-                ConnectivityStatusInfo("Service Disconnected", Icons.Filled.Error, Color.Red)
+            _gnssStatus.value = GnssStatusInfo("Service Disconnected", Icons.Filled.Error, Color.Red)
+            _connectivityStatus.value = ConnectivityStatusInfo("Service Disconnected", Icons.Filled.Error, Color.Red)
         }
     }
 
     init {
-        bindToNavigationService()
+        // Service binding will be initiated by Activity after permission checks
     }
 
-    private fun bindToNavigationService() {
+    fun bindToNavigationService() {
+        if (isServiceBound.value || navigationService != null) return // Already bound or binding
+        Log.d("MainViewModel", "Attempting to bind to NavigationService.")
         Intent(getApplication(), NavigationService::class.java).also { intent ->
-            getApplication<Application>().bindService(
-                intent,
-                serviceConnection,
-                Context.BIND_AUTO_CREATE
-            )
+            getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    fun startNavigationServiceViaIntent() {
+        Log.d("MainViewModel", "Attempting to start NavigationService via intent.")
+        Intent(getApplication(), NavigationService::class.java).also { intent ->
+            ContextCompat.startForegroundService(getApplication(), intent)
         }
     }
 
     private fun startCollectingDataFromService(service: NavigationService) {
-        viewModelScope.launch {
-            service.currentSpeedFlow.collect { speedMs ->
-                _currentSpeedKmh.value = speedMs * 3.6f
-            }
-        }
-        viewModelScope.launch {
-            service.userLocationFlow.collect { latLngFromService -> // latLngFromService is LatLng?
-                latLngFromService?.let {
-                    _userLocation.value = StableLatLng(it) // Convert to StableLatLng
-                }
-            }
-        }
-        viewModelScope.launch {
-            service.userHeadingFlow.collect { heading ->
-                _userHeading.value = heading
-            }
-        }
+        viewModelScope.launch { service.currentSpeedFlow.collect { _currentSpeedKmh.value = it * 3.6f } }
+        viewModelScope.launch { service.userLocationFlow.collect { latLng -> latLng?.let { _userLocation.value = StableLatLng(it) } } }
+        viewModelScope.launch { service.userHeadingFlow.collect { _userHeading.value = it } }
         viewModelScope.launch {
             service.gnssStatusTextFlow.collect { statusText ->
                 _gnssStatus.value = when {
-                    statusText.contains("Strong", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.LocationOn,
-                        Color.Green
-                    )
-
-                    statusText.contains("Moderate", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.LocationOn,
-                        Color.Yellow
-                    )
-
-                    statusText.contains("Weak", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.Warning,
-                        Color(0xFFFFA500)
-                    )
-
-                    statusText.contains(
-                        "Searching",
-                        ignoreCase = true
-                    ) || statusText.contains("Awaiting Fix", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.LocationSearching,
-                        Color.Blue
-                    )
-
-                    statusText.contains("Permission Denied", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.LocationOff,
-                        Color.Red
-                    )
-
-                    statusText.contains("Error", ignoreCase = true) -> GnssStatusInfo(
-                        statusText,
-                        Icons.Filled.Error,
-                        Color.Red
-                    )
-
-                    statusText.contains("Stopped", ignoreCase = true) || statusText.contains(
-                        "Off",
-                        ignoreCase = true
-                    ) -> GnssStatusInfo(statusText, Icons.Filled.LocationOff, Color.Gray)
-
+                    statusText.contains("Strong", true) -> GnssStatusInfo(statusText, Icons.Filled.LocationOn, Color.Green)
+                    statusText.contains("Moderate", true) -> GnssStatusInfo(statusText, Icons.Filled.LocationOn, Color.Yellow)
+                    statusText.contains("Weak", true) -> GnssStatusInfo(statusText, Icons.Filled.Warning, Color(0xFFFFA500))
+                    statusText.contains("Searching", true) || statusText.contains("Awaiting Fix", true) -> GnssStatusInfo(statusText, Icons.Filled.LocationSearching, Color.Blue)
+                    statusText.contains("Permission Denied", true) -> GnssStatusInfo(statusText, Icons.Filled.LocationOff, Color.Red)
+                    statusText.contains("Error", true) -> GnssStatusInfo(statusText, Icons.Filled.Error, Color.Red)
+                    statusText.contains("Stopped", true) || statusText.contains("Off", true) -> GnssStatusInfo(statusText, Icons.Filled.LocationOff, Color.Gray)
                     else -> GnssStatusInfo(statusText, Icons.Filled.LocationSearching, Color.Gray)
                 }
             }
         }
         viewModelScope.launch {
             service.connectivityStatusTextFlow.collect { statusText ->
-                val peerCount = statusText.substringAfter("Peers: ", "").toIntOrNull()
-                    ?: statusText.substringAfter("(Peers: ", "").substringBefore(")", "")
-                        .toIntOrNull() ?: 0
+                val peerCount = statusText.substringAfter("Peers: ", "").toIntOrNull() ?: statusText.substringAfter("(Peers: ", "").substringBefore(")", "").toIntOrNull() ?: 0
                 _connectivityStatus.value = when {
-                    statusText.contains(
-                        "Group Owner",
-                        ignoreCase = true
-                    ) || statusText.contains(
-                        "Client",
-                        ignoreCase = true
-                    ) || statusText.contains("Peers:", ignoreCase = true) ->
-                        ConnectivityStatusInfo(
-                            statusText,
-                            if (peerCount > 0) Icons.Filled.Wifi else Icons.Filled.WifiOff,
-                            if (peerCount > 0) Color.Green else Color(0xFFFFA500)
-                        )
-
-                    statusText.contains("Discovering", ignoreCase = true) -> ConnectivityStatusInfo(
-                        statusText,
-                        Icons.Filled.DonutSmall,
-                        Color.Blue
-                    )
-
-                    statusText.contains(
-                        "Not Available",
-                        ignoreCase = true
-                    ) || statusText.contains(
-                        "Error",
-                        ignoreCase = true
-                    ) || statusText.contains("Failed", ignoreCase = true) ->
+                    statusText.contains("GO", true) || statusText.contains("Client", true) || statusText.contains("Peers:", true) ->
+                        ConnectivityStatusInfo(statusText, if (peerCount > 0) Icons.Filled.Wifi else Icons.Filled.WifiOff, if (peerCount > 0) Color.Green else Color(0xFFFFA500))
+                    statusText.contains("Discovering", true) -> ConnectivityStatusInfo(statusText, Icons.Filled.DonutSmall, Color.Blue)
+                    statusText.contains("Not Available", true) || statusText.contains("Error", true) || statusText.contains("Failed", true) ->
                         ConnectivityStatusInfo(statusText, Icons.Filled.Error, Color.Red)
-
-                    statusText.contains("Off", ignoreCase = true) -> ConnectivityStatusInfo(
-                        statusText,
-                        Icons.Filled.WifiOff,
-                        Color.Gray
-                    )
-
+                    statusText.contains("Off", true) || statusText.contains("Stopped", true) -> ConnectivityStatusInfo(statusText, Icons.Filled.WifiOff, Color.Gray)
                     else -> ConnectivityStatusInfo(statusText, Icons.Filled.DonutSmall, Color.Gray)
                 }
             }
         }
-        viewModelScope.launch {
-            service.nearbyVehiclesFlow.collect { vehiclesFromService -> // vehiclesFromService is List<PeerDeviceDisplay> from Service
-                _peerDevices.value = vehiclesFromService.map { vehicleDisplayFromService ->
-                    // vehicleDisplayFromService is a PeerDeviceDisplay object from the service.
-                    // Its 'position' field is already a StableLatLng.
-                    PeerDeviceDisplay( // This constructs MainViewModel.PeerDeviceDisplay
-                        id = vehicleDisplayFromService.id,
-                        position = vehicleDisplayFromService.position, // Use the StableLatLng directly
-                        icon = vehicleDisplayFromService.icon
-                    )
-                }
-            }
-        }
+        viewModelScope.launch { service.nearbyVehiclesFlow.collect { _peerDevices.value = it.map { v -> PeerDeviceDisplay(v.deviceId, StableLatLng(v.latitude, v.longitude)) } } }
         Log.d("MainViewModel", "Started collecting data from NavigationService flows.")
     }
 
-    fun onSettingsClicked() {
-        Log.d("MainViewModel", "Settings icon clicked. Navigation to settings not yet implemented.")
-    }
-
-    fun onSosClicked() {
-        Log.d("MainViewModel", "SOS icon clicked. SOS functionality not yet implemented.")
-    }
+    fun onSettingsClicked() { Log.d("MainViewModel", "Settings icon clicked.") }
+    fun onSosClicked() { Log.d("MainViewModel", "SOS icon clicked.") }
 
     override fun onCleared() {
         super.onCleared()
         if (isServiceBound.value) {
-            try {
-                getApplication<Application>().unbindService(serviceConnection)
-            } catch (e: IllegalArgumentException) {
-                Log.e("MainViewModel", "Service not registered or already unbound: ${e.message}")
-            }
+            try { getApplication<Application>().unbindService(serviceConnection) }
+            catch (e: IllegalArgumentException) { Log.e("MainViewModel", "Service not registered or already unbound: ${e.message}") }
             isServiceBound.value = false
         }
     }
@@ -342,45 +226,137 @@ class MainViewModel @Inject constructor(
 class MainActivity : ComponentActivity() {
 
     private val mainViewModel: MainViewModel by viewModels()
-    private lateinit var requestPermissionLauncher: ManagedActivityResultLauncher<Array<String>, Map<String, Boolean>>
+    private lateinit var permissionLauncher: ManagedActivityResultLauncher<Array<String>, Map<String, Boolean>>
+    private var showPermissionRationaleDialog by mutableStateOf(false)
+    private var rationalePermissionsList = listOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                requestPermissionLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.RequestMultiplePermissions()
-                ) { permissions ->
-                    if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
-                        Log.d("MainActivity", "Fine location permission granted.")
-                    } else {
-                        Log.w("MainActivity", "Location permission denied.")
-                    }
+                permissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestMultiplePermissions()) {
+                    permissionsResult -> handlePermissionsResult(permissionsResult)
                 }
+
                 LaunchedEffect(Unit) {
-                    checkAndRequestPermissions()
+                    checkAndRequestInitialPermissions()
+                }
+
+                if (showPermissionRationaleDialog) {
+                    PermissionRationaleDialog(
+                        permissions = rationalePermissionsList,
+                        onConfirm = {
+                            showPermissionRationaleDialog = false
+                            permissionLauncher.launch(rationalePermissionsList.toTypedArray())
+                        },
+                        onDismiss = {
+                            showPermissionRationaleDialog = false
+                            // Handle definitive denial or guide user to settings
+                            Log.w("MainActivity", "User dismissed permission rationale for: $rationalePermissionsList")
+                        }
+                    )
                 }
                 V2VSentinelApp(mainViewModel)
             }
         }
     }
 
-    private fun checkAndRequestPermissions() {
-        val requiredPermissions = mutableListOf(
+    private fun allPermissionsGranted(permissions: List<String>): Boolean {
+        return permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+    private fun getRequiredPermissions(): List<String> {
+        val permissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
+            // Manifest.permission.ACCESS_COARSE_LOCATION // Fine implies coarse
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+             // For P2P on Android 10-12, these are often sufficient with ACCESS_FINE_LOCATION
+            permissions.add(Manifest.permission.ACCESS_WIFI_STATE)
+            permissions.add(Manifest.permission.CHANGE_WIFI_STATE)
+        }
+        // Add other essential permissions like INTERNET if not automatically granted.
+        return permissions.distinct() // Ensure no duplicates
+    }
+
+    private fun checkAndRequestInitialPermissions() {
+        val requiredPermissions = getRequiredPermissions()
         val permissionsToRequest = requiredPermissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (permissionsToRequest.isNotEmpty()) {
-            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
+        if (permissionsToRequest.isEmpty()) {
+            Log.d("MainActivity", "All essential permissions already granted. Starting service.")
+            startServiceAndBind()
         } else {
-            Log.d("MainActivity", "All required permissions already granted.")
+            // Check for rationale before launching directly
+            val permissionsToShowRationale = permissionsToRequest.filter {
+                shouldShowRequestPermissionRationale(it)
+            }
+            if (permissionsToShowRationale.isNotEmpty()) {
+                rationalePermissionsList = permissionsToShowRationale
+                showPermissionRationaleDialog = true
+            } else {
+                permissionLauncher.launch(permissionsToRequest.toTypedArray())
+            }
         }
     }
+
+    private fun handlePermissionsResult(permissionsResult: Map<String, Boolean>) {
+        val requiredPermissions = getRequiredPermissions()
+        val allGranted = requiredPermissions.all { permissionsResult[it] == true || ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+
+        if (allGranted) {
+            Log.d("MainActivity", "All required permissions have been granted after request. Starting service.")
+            startServiceAndBind()
+        } else {
+            Log.w("MainActivity", "Not all required permissions were granted. Some features might be unavailable.")
+            // You might want to show a more persistent message or disable features.
+            // For example, if location is denied, the core functionality is broken.
+            // Check specific critical permissions
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                Log.e("MainActivity", "CRITICAL: Fine location permission is still denied!")
+                // Show error to user, maybe offer to go to settings
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                Log.e("MainActivity", "CRITICAL: Post Notifications permission is still denied on Android 13+!")
+            }
+        }
+    }
+
+    private fun startServiceAndBind() {
+        mainViewModel.startNavigationServiceViaIntent() // Starts the service
+        mainViewModel.bindToNavigationService()      // Binds to it for UI updates
+    }
 }
+
+@Composable
+fun PermissionRationaleDialog(permissions: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val permissionText = remember(permissions) {
+        permissions.joinToString(separator = "\n- ", prefix = "- ") {
+            when (it) {
+                Manifest.permission.ACCESS_FINE_LOCATION -> "Precise Location (for navigation and P2P)"
+                Manifest.permission.POST_NOTIFICATIONS -> "Notifications (to keep service running and provide updates)"
+                Manifest.permission.NEARBY_WIFI_DEVICES -> "Nearby Devices (for Wi-Fi Direct P2P)"
+                Manifest.permission.ACCESS_WIFI_STATE -> "Access Wi-Fi State (for P2P)"
+                Manifest.permission.CHANGE_WIFI_STATE -> "Change Wi-Fi State (for P2P)"
+                else -> it.substringAfter("android.permission.")
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Permissions Required") },
+        text = { Text("This app needs the following permissions to function correctly:\n$permissionText\n\nPlease grant these permissions.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Grant Permissions") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 
 @Composable
 fun V2VSentinelApp(viewModel: MainViewModel) {
@@ -447,30 +423,18 @@ fun DashboardScreen(viewModel: MainViewModel) {
     val connectivityStatus by viewModel.connectivityStatus.collectAsState()
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        modifier = Modifier.fillMaxSize().padding(16.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter),
+            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { viewModel.onSettingsClicked() }) {
-                Icon(
-                    Icons.Filled.Settings,
-                    contentDescription = "Settings",
-                    modifier = Modifier.size(36.dp)
-                )
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", modifier = Modifier.size(36.dp))
             }
             IconButton(onClick = { viewModel.onSosClicked() }) {
-                Icon(
-                    Icons.AutoMirrored.Filled.HelpOutline,
-                    contentDescription = "SOS",
-                    modifier = Modifier.size(36.dp)
-                )
+                Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "SOS", modifier = Modifier.size(36.dp))
             }
         }
         Column(
@@ -478,7 +442,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = String.format("%.1f", speedKmh),
+                text = String.format(Locale.US, "%.1f", speedKmh),
                 fontSize = 100.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
@@ -486,23 +450,12 @@ fun DashboardScreen(viewModel: MainViewModel) {
             Text(text = "km/h", fontSize = 24.sp, textAlign = TextAlign.Center)
         }
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(bottom = 16.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StatusItem(
-                icon = gnssStatus.icon,
-                text = gnssStatus.statusText,
-                color = gnssStatus.color
-            )
-            StatusItem(
-                icon = connectivityStatus.icon,
-                text = connectivityStatus.statusText,
-                color = connectivityStatus.color
-            )
+            StatusItem(icon = gnssStatus.icon, text = gnssStatus.statusText, color = gnssStatus.color)
+            StatusItem(icon = connectivityStatus.icon, text = connectivityStatus.statusText, color = connectivityStatus.color)
         }
     }
 }
@@ -519,6 +472,7 @@ fun StatusItem(icon: ImageVector, text: String, color: Color) {
     }
 }
 
+@SuppressLint("DefaultLocale")
 @Composable
 fun LiveMapScreen(viewModel: MainViewModel) {
     val userStableLocationFromViewModel by viewModel.userLocation.collectAsState()
@@ -527,34 +481,25 @@ fun LiveMapScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
 
     val playServicesAvailable = remember {
-        GoogleApiAvailability.getInstance()
-            .isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+        GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
     }
 
     if (!playServicesAvailable) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "Google Play Services is not available. Map cannot be displayed.",
-                textAlign = TextAlign.Center
-            )
+            Text("Google Play Services is not available. Map cannot be displayed.", textAlign = TextAlign.Center)
             Log.e("LiveMapScreen", "Google Play Services not available.")
         }
         return
     }
 
     val cameraPositionState = rememberCameraPositionState {
-        // Directly use the unwrapped .latLng property from the State object
         position = CameraPosition.fromLatLngZoom(userStableLocationFromViewModel.latLng, 15f)
     }
 
     LaunchedEffect(userStableLocationFromViewModel) {
         val currentActualUserLatLng: LatLng = userStableLocationFromViewModel.latLng
         if (currentActualUserLatLng.latitude != 0.0 || currentActualUserLatLng.longitude != 0.0) {
-            cameraPositionState.animate(
-                com.google.android.gms.maps.CameraUpdateFactory.newLatLng(
-                    currentActualUserLatLng
-                ), 1000
-            )
+            cameraPositionState.animate(com.google.android.gms.maps.CameraUpdateFactory.newLatLng(currentActualUserLatLng), 1000)
         }
     }
 
@@ -569,23 +514,15 @@ fun LiveMapScreen(viewModel: MainViewModel) {
             Marker(
                 state = MarkerState(position = userMarkerActualLatLng),
                 title = "My Location",
-                snippet = "Speed: ${
-                    String.format(
-                        "%.1f",
-                        viewModel.currentSpeedKmh.collectAsState().value
-                    )
-                } km/h",
+                snippet = "Speed: ${String.format(Locale.US, "%.1f", viewModel.currentSpeedKmh.collectAsState().value)} km/h",
                 icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
                 rotation = userHeadingFromViewModel
             )
         }
-
         peerDeviceListFromViewModel.forEach { peerDeviceDisplay ->
-            // peerDeviceDisplay is PeerDeviceDisplay (ViewModel), position is StableLatLng
-            // MarkerState expects LatLng from com.google.android.gms.maps.model
             val peerMarkerActualLatLng: LatLng = peerDeviceDisplay.position.latLng
             Marker(
-                state = MarkerState(position = peerMarkerActualLatLng), // This should now be correct
+                state = MarkerState(position = peerMarkerActualLatLng),
                 title = "Peer ${peerDeviceDisplay.id}",
                 icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN)
             )
@@ -597,16 +534,12 @@ fun LiveMapScreen(viewModel: MainViewModel) {
 @Preview(showBackground = true, device = "spec:width=1080px,height=2340px,dpi=440")
 @Composable
 fun DashboardScreenPreview() {
-    MaterialTheme {
-        DashboardScreen(viewModel = MainViewModel(Application()))
-    }
+    MaterialTheme { DashboardScreen(viewModel = MainViewModel(Application())) }
 }
 
 @SuppressLint("ViewModelConstructorInComposable")
 @Preview(showBackground = true)
 @Composable
 fun LiveMapScreenPreview() {
-    MaterialTheme {
-        LiveMapScreen(viewModel = MainViewModel(Application()))
-    }
+    MaterialTheme { LiveMapScreen(viewModel = MainViewModel(Application())) }
 }

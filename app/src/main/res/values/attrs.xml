@@ -1,0 +1,9 @@
+<resources>
+    <declare-styleable name="SliderPreference">
+        <attr name="slider_minValue" format="float" />
+        <attr name="slider_maxValue" format="float" />
+        <attr name="slider_stepSize" format="float" />
+        <attr name="slider_defaultValue" format="float" />
+        <attr name="slider_valueFormat" format="string" />
+    </declare-styleable>
+</resources>

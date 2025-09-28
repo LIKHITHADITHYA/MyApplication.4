@@ -248,8 +248,8 @@ class DashboardFragment : Fragment(), TextToSpeech.OnInitListener {
 
     private fun setupObservers() {
         Log.d(TAG, "Setting up observers for ViewModel data.")
-        viewModel.gnssData.observe(viewLifecycleOwner) { gnssString ->
-            Log.d(TAG, "Observer: gnssData updated to: '$gnssString'")
+        viewModel.gnssStatusString.observe(viewLifecycleOwner) { gnssString: String? ->
+            Log.d(TAG, "Observer: gnssStatusString updated to: '$gnssString'")
             binding.gnssDataTextview.text = gnssString ?: "GNSS: N/A"
         }
 
